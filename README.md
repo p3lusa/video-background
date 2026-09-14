@@ -1,4 +1,4 @@
-# Video Background
+# Video Wallpaper
 
 Desktop wallpaper renderer for [Omarchy](https://omarchy.org). Drop `videos/*.mp4` into any theme's directory and that theme plays them as a looping video wallpaper; themes without a `videos/` directory behave exactly like the stock image background.
 
