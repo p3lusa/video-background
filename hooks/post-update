@@ -3,7 +3,7 @@
 #
 # Two concerns, both idempotent and "never fight a deliberate change":
 #   1. While the video-wallpaper theme is the active one, keep
-#      p3lu.video-background enabled and omarchy.background disabled.
+#      io.github.p3lu.video-background enabled and omarchy.background disabled.
 #   2. (Re)apply GPU video-decode acceleration for whatever GPU this machine
 #      has, so the wallpaper decodes on the GPU, not the CPU.
 # No-op (for the parts that don't apply) when the theme/plugin is absent.
@@ -11,19 +11,19 @@
 set -euo pipefail
 
 THEME_DIR="$HOME/.config/omarchy/themes/video-wallpaper"
-PLUGIN_DIR="$HOME/.config/omarchy/plugins/p3lu.video-background"
+PLUGIN_DIR="$HOME/.config/omarchy/plugins/io.github.p3lu.video-background"
 SHELL_JSON="$HOME/.config/omarchy/shell.json"
 THEME_NAME_FILE="$HOME/.local/state/omarchy/current/theme.name"
 
 [[ -d $PLUGIN_DIR && -f $SHELL_JSON ]] || exit 0
 
-video_on=$(jq -r '[.plugins[]?.id // empty] | index("p3lu.video-background")' "$SHELL_JSON" 2>/dev/null || echo null)
+video_on=$(jq -r '[.plugins[]?.id // empty] | index("io.github.p3lu.video-background")' "$SHELL_JSON" 2>/dev/null || echo null)
 
 # 1) Re-assert enable/disable state while the video-wallpaper theme is active.
 if [[ -d $THEME_DIR && "$(cat "$THEME_NAME_FILE" 2>/dev/null || true)" == "video-wallpaper" ]]; then
   stock_off=$(jq -r '.disabledPlugins[]? | select(. == "omarchy.background")' "$SHELL_JSON" 2>/dev/null || echo "")
   if [[ "$video_on" == "null" || -z $stock_off ]]; then
-    omarchy plugin enable p3lu.video-background
+    omarchy plugin enable io.github.p3lu.video-background
     omarchy plugin disable omarchy.background
   fi
 fi
