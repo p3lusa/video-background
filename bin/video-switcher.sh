@@ -1,5 +1,5 @@
 #!/bin/bash
-# p3lu.video-background: carousel selector for the whole video library.
+# io.github.p3lu.video-background: carousel selector for the whole video library.
 #
 # Same UI as Omarchy's wallpaper switcher (a wrapper around
 # omarchy-menu-images). The library is stable: it lists every clip of every

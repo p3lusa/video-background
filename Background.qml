@@ -71,7 +71,7 @@ Item {
     path = String(path || "").trim()
     if (path === videoPath) return
     videoPath = path
-    console.debug("[p3lu.video-background] video -> "
+    console.debug("[io.github.p3lu.video-background] video -> "
         + (path !== "" ? path : "(none, image fallback)"))
   }
 
@@ -186,7 +186,7 @@ Item {
     // .video-theme) so the stock theme selector stays clean. Falls back to
     // the stock switcher when the plugin script is missing.
     command: ["bash", "-c",
-      "VTS=\"$HOME/.config/omarchy/plugins/p3lu.video-background/bin/video-theme-switcher.sh\"; " +
+      "VTS=\"$HOME/.config/omarchy/plugins/io.github.p3lu.video-background/bin/video-theme-switcher.sh\"; " +
       "if [[ -x $VTS ]]; then theme=$(\"$VTS\"); else theme=$(omarchy-theme-switcher); fi; " +
       "[[ -n $theme ]] && omarchy-theme-set \"$theme\" >/dev/null 2>&1 &"]
     onExited: root.refreshBackground()
@@ -372,7 +372,7 @@ Item {
         var idle = (statusPart.indexOf("\"idle\":true") !== -1)
         var next = locked || idle
         if (next !== root.sessionOccluded) {
-          console.log("[p3lu.video-background] "
+          console.log("[io.github.p3lu.video-background] "
               + (next ? "occluded (lock/idle) -> pausing video" : "visible -> resuming video"))
           root.sessionOccluded = next
         }
@@ -455,13 +455,13 @@ Item {
               videoPlayer.pause()
               return
             }
-            console.log("[p3lu.video-background] playing " + root.videoPath + " on " + modelData.name)
+            console.log("[io.github.p3lu.video-background] playing " + root.videoPath + " on " + modelData.name)
             videoOut.ensureFrameHook()
           }
         }
         onErrorOccurred: function(error, errorString) {
           if (root.videoPath !== "")
-            console.warn("[p3lu.video-background] video error on " + modelData.name + ": " + errorString)
+            console.warn("[io.github.p3lu.video-background] video error on " + modelData.name + ": " + errorString)
         }
       }
 

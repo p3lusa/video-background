@@ -38,8 +38,8 @@ for arg in "$@"; do
 done
 
 MENU_FILE="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
-BEGIN_MARK="// >>> p3lu.video-background >>>"
-END_MARK="// <<< p3lu.video-background <<<"
+BEGIN_MARK="// >>> io.github.p3lu.video-background >>>"
+END_MARK="// <<< io.github.p3lu.video-background <<<"
 PLUGIN_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 say() { (( QUIET )) || echo "$@"; }

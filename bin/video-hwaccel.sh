@@ -281,7 +281,7 @@ apply_dropin() {
   fi
   mkdir -p "$DROPIN_DIR"
   {
-    echo "# Managed by p3lu.video-background (bin/video-hwaccel.sh --apply)."
+    echo "# Managed by io.github.p3lu.video-background (bin/video-hwaccel.sh --apply)."
     echo "# Injects Qt FFmpeg hardware-decode settings into the WM session so"
     echo "# quickshell (video wallpaper) decodes on the GPU. Idempotent."
     echo "[Service]"

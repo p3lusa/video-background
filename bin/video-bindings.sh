@@ -1,5 +1,5 @@
 #!/bin/bash
-# p3lu.video-background: install or remove the video keybindings in the
+# io.github.p3lu.video-background: install or remove the video keybindings in the
 # user's Hyprland bindings (~/.config/hypr/bindings.lua).
 #
 # The bindings live in a self-contained, marked block. --add appends the
@@ -32,8 +32,8 @@ done
 
 PLUGIN_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BINDINGS_FILE="$HOME/.config/hypr/bindings.lua"
-BEGIN_MARK="-- >>> p3lu.video-background >>>"
-END_MARK="-- <<< p3lu.video-background <<<"
+BEGIN_MARK="-- >>> io.github.p3lu.video-background >>>"
+END_MARK="-- <<< io.github.p3lu.video-background <<<"
 
 say() { (( QUIET )) || echo "$@"; }
 

@@ -68,7 +68,7 @@ library's home (if it's missing, `video-add` simply skips the mirror).
 
 ## Creating a theme from your own clip (Aether)
 
-This plugin ships a helper, `bin/video-theme.sh` (installed at `~/.config/omarchy/plugins/p3lu.video-background/bin/video-theme.sh`), that turns any clip into a complete, palette-matched Omarchy theme in one command:
+This plugin ships a helper, `bin/video-theme.sh` (installed at `~/.config/omarchy/plugins/io.github.p3lu.video-background/bin/video-theme.sh`), that turns any clip into a complete, palette-matched Omarchy theme in one command:
 
 ```bash
 video-theme.sh <clip.mp4> [theme-name]   # default name: video-<clip base>
@@ -137,7 +137,7 @@ active nor in the cycle list are removed (abandoned themes stop cluttering
 the switcher). To remove one immediately: `omarchy theme remove <theme>`.
 
 `video-next` / `video-prev` are installed at
-`~/.config/omarchy/plugins/p3lu.video-background/bin/` (prepend that
+`~/.config/omarchy/plugins/io.github.p3lu.video-background/bin/` (prepend that
 directory to `PATH` to use them from a terminal). They walk the whole video
 library — every clip of every theme that has videos, the same set the
 switcher shows (per-clip themes win over library copies of the same clip,
@@ -209,9 +209,9 @@ With a theme that has no `videos/` directory (the default for most themes), the 
 
 ```bash
 # remove the installed keybindings (if you used any video tool)
-~/.config/omarchy/plugins/p3lu.video-background/bin/video-bindings.sh --remove
+~/.config/omarchy/plugins/io.github.p3lu.video-background/bin/video-bindings.sh --remove
 
-omarchy plugin remove p3lu.video-background --yes
+omarchy plugin remove io.github.p3lu.video-background --yes
 omarchy plugin enable omarchy.background
 ```
 
@@ -306,7 +306,7 @@ To check it's decoding on the GPU: with a video wallpaper active, `ls -l /proc/$
 - A video only plays while its paired background image (same base name) is the active background — videos without a paired image are ignored.
 - If you run `omarchy refresh shell` by hand, re-apply the state with:
   ```bash
-  omarchy plugin enable p3lu.video-background
+  omarchy plugin enable io.github.p3lu.video-background
   omarchy plugin disable omarchy.background
   ```
   (The `video-wallpaper` theme ships a `post-update` hook that does this automatically after `omarchy update` when its theme is active.)

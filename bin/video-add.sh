@@ -116,7 +116,7 @@ fi
 # it never fails the add.
 SHELL_JSON="$HOME/.config/omarchy/shell.json"
 if [[ -x "$PLUGIN_BIN/video-hwaccel.sh" ]]; then
-  plugin_on=$(jq -r '[.plugins[]?.id // empty] | index("p3lu.video-background")' "$SHELL_JSON" 2>/dev/null || echo null)
+  plugin_on=$(jq -r '[.plugins[]?.id // empty] | index("io.github.p3lu.video-background")' "$SHELL_JSON" 2>/dev/null || echo null)
   if [[ "$plugin_on" != "null" ]]; then
     echo "configuring GPU video decode…"
     "$PLUGIN_BIN/video-hwaccel.sh" --apply || true

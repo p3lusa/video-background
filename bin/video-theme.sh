@@ -17,7 +17,7 @@
 # (installed alongside this helper) switch to the next/previous clip+palette
 # pair with one command.
 #
-# Requirements: aether, ffmpeg, omarchy, and the p3lu.video-background
+# Requirements: aether, ffmpeg, omarchy, and the io.github.p3lu.video-background
 # plugin (to render the videos/ directory — without it, the theme shows
 # the poster image instead).
 #
