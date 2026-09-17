@@ -498,8 +498,11 @@ Item {
           })
           frameHooked = true
         }
+        // Keep visible once the first frame is decoded, regardless of
+        // playbackState. During pause/resume transitions the state briefly
+        // hits BufferingState; gating on PlayingState alone caused a visible
+        // flash to the poster image (or black) on every idle cycle.
         visible: root.videoPath !== ""
-            && videoPlayer.playbackState === MediaPlayer.PlayingState
             && videoOut.frameDecoded
         Component.onCompleted: {
           videoPlayer.videoOutput = videoOut
