@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "io.github.p3lu.video-background",
   "name": "Video Wallpaper",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "author": "p3lusa",
   "license": "MIT",
   "homepage": "https://github.com/p3lusa/video-background",
-  "description": "Desktop wallpaper renderer. Plays the active theme's looping video when that theme ships a videos/ directory, and otherwise behaves exactly like the stock image background (current/background symlink, transitions). Videos pause while the session is locked or idle, and the active clip survives shell restarts.",
+  "description": "Desktop wallpaper renderer. Plays the active theme's looping video when that theme ships a videos/ directory, and otherwise behaves exactly like the stock image background (current/background symlink, transitions). Videos pause while the session is locked or idle, and the active clip survives shell restarts. Pairs with the companion video-wallpaper theme (p3lusa/video-wallpaper), which ships the clip library, sample wallpapers, and the neon skin — the theme alone only shows static images without this renderer.",
   "keywords": [
     "video",
     "wallpaper",
