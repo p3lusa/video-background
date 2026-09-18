@@ -31,11 +31,16 @@ perclip="$USER_THEMES/video-$name"
 has_perclip=false
 [[ -f "$perclip/.video-theme" ]] && has_perclip=true
 
-lib_copies=()
+declare -A lib_copies=()
 for tdir in "$USER_THEMES"/*/; do
-  [[ -f "${tdir}videos/$name.mp4" ]] || continue
-  [[ "${tdir%/}" == "$perclip" ]] && continue   # the per-clip theme itself
-  lib_copies+=("${tdir%/}")
+  # Check both new structure (videos/) and legacy (backgrounds/ with .mp4)
+  if [[ -f "${tdir}videos/$name.mp4" ]]; then
+    [[ "${tdir%/}" == "$perclip" ]] && continue
+    lib_copies["${tdir%/}"]="videos"
+  elif [[ -f "${tdir}backgrounds/$name.mp4" ]]; then
+    [[ "${tdir%/}" == "$perclip" ]] && continue
+    lib_copies["${tdir%/}"]="backgrounds"
+  fi
 done
 
 if ! $has_perclip && (( ${#lib_copies[@]} == 0 )); then
@@ -114,8 +119,9 @@ if $has_perclip; then
   omarchy theme remove "video-$name" >/dev/null 2>&1 || rm -rf "$perclip"
   echo "removed per-clip theme video-$name."
 fi
-for t in "${lib_copies[@]}"; do
-  rm -f "$t/videos/$name.mp4" "$t/backgrounds/$name.png"
+for t in "${!lib_copies[@]}"; do
+  subdir="${lib_copies[$t]}"
+  rm -f "$t/$subdir/$name.mp4" "$t/backgrounds/$name.png"
   echo "removed library copy in $t."
 done
 

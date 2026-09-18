@@ -17,7 +17,7 @@
 #   preview pane (right 1/3): poster thumbnail (kitty protocol, or
 #   chafa→sixel when chafa is installed) + metadata card + action hints.
 #
-# Keys: Enter play · r remove · a add · ? help · q/Esc quit
+# Keys: Enter play · r remove · a add · h/? help · q/Esc quit
 set -euo pipefail
 
 # ---------------------------------------------------------------- paths ----
@@ -80,19 +80,39 @@ declare_icons() {
 # $SESSION/library.tsv: name \t theme \t file \t kind(own|lib)
 # Dedup: per-clip themes (with .video-theme marker) claim their clips;
 # library themes drop clips already claimed.
+# Note: supports both old structure (videos/ dir) and legacy (mp4 in backgrounds/)
 scan_library() {
   local tmp="$SESSION/scan.tmp"
   : > "$tmp"
   local t b perclip f base
   local -A claimed=()
   for t in "$THEMES_USER"/* "$THEMES_SYS"/*; do
-    [[ -d $t && -d $t/videos && -d $t/backgrounds ]] || continue
+    # Must have backgrounds dir; videos dir is optional (legacy themes may use backgrounds/)
+    [[ -d $t && -d $t/backgrounds ]] || continue
     b=$(basename "$t")
     perclip=0
     [[ -f $t/.video-theme ]] && perclip=1
-    for f in "$t"/videos/*.mp4; do
+    
+    # Scan videos/ directory first (new structure)
+    if [[ -d $t/videos ]]; then
+      for f in "$t"/videos/*.mp4; do
+        [[ -e $f ]] || continue
+        base=$(basename "$f" .mp4)
+        if [[ $perclip == 1 ]]; then
+          printf '%s\t%s\t%s\t%s\n' "$base" "$b" "$f" own >> "$tmp"
+          claimed["$base"]=1
+        elif [[ -z ${claimed["$base"]:-} ]]; then
+          printf '%s\t%s\t%s\t%s\n' "$base" "$b" "$f" lib >> "$tmp"
+        fi
+      done
+    fi
+    
+    # Also scan backgrounds/ for mp4 files (legacy structure for themes like event-horizon)
+    # Skip if already claimed by videos/ scan
+    for f in "$t"/backgrounds/*.mp4; do
       [[ -e $f ]] || continue
       base=$(basename "$f" .mp4)
+      [[ -z ${claimed["$base"]:-} ]] || continue
       if [[ $perclip == 1 ]]; then
         printf '%s\t%s\t%s\t%s\n' "$base" "$b" "$f" own >> "$tmp"
         claimed["$base"]=1
@@ -199,50 +219,76 @@ detect_img_proto() {
 # $SESSION/poster-<base>-<w>.img and regenerated only when the poster or the
 # target width changes.
 render_poster() { # <name>
-  local name=$1 p cache w cols
+  local name=$1 p cache w cols c
   p=$(poster_for "$name")
+  # The preview pane must always show *this* clip's image. kitty keeps image
+  # placements alive across preview redraws, so if this clip has no poster
+  # the previous clip's picture would linger — clear all placements first,
+  # even in the no-poster case.
+  [[ -z $IMG_PROTO || $IMG_PROTO == kitty ]] && printf '\033_Ga=d\033\\'
   [[ -z $p || -z $IMG_PROTO || $IMG_PROTO == none ]] && return 0
-  # Dynamic target width: the preview pane is fzf's right 33%. Recomputed on
-  # every render (fzf re-runs the preview on focus, resize and redraw), so
-  # the poster follows the terminal size — tiling layout and fullscreen.
-  # ~8 px per cell is the common monospace default; clamped to sane bounds.
+  # Dynamic target: the preview pane is fzf's right 33%. Recomputed on every
+  # render (fzf re-runs the preview on focus/resize/redraw) so the poster
+  # follows the terminal size. `c` is the pane width in COLUMNS (the kitty
+  # placement key that scales the image); `w` is the source pixel width we
+  # ask ffmpeg for (~8 px per monospace cell, clamped to sane bounds).
   cols=$(tput cols 2>/dev/null) || cols=80
   (( cols < 40 )) && cols=40
-  w=$(( cols / 3 * 8 ))
-  (( w > 720 )) && w=720
-  (( w < 160 )) && w=160
-  cache="$SESSION/poster-$(basename "$p" .*)-$w.img"
+  c=$(( cols / 3 - 2 )); (( c < 12 )) && c=12   # minus the preview border
+  w=$(( c * 8 )); (( w > 720 )) && w=720
+  # basename removes the directory; strip any image extension to get a clean
+  # cache key. The simple, robust way: remove everything from the first dot.
+  cache="$SESSION/poster-$(basename "$p" | sed 's/\.[^.]*$//')-$w.img"
   if [[ ! -f $cache || $p -nt $cache ]]; then
     local out=""
     case $IMG_PROTO in
       kitty)
-        # downscale with ffmpeg (always present) -> lossy PNG -> kitty sequence.
-        # Spec minimal form: a=T (transmit), f=100 (PNG), m=0 (final chunk),
-        # w=<px> (display width = the preview pane). One chunk is fine for a
-        # small thumbnail.
+        # downscale with ffmpeg (always present) -> PNG -> kitty sequence.
+        #
+        # The spec (sw.kovidgoyal.net/kitty/graphics-protocol) requires the
+        # payload to be sent in chunks: `base64 -w 4096` -> one APC per line,
+        # `m=1` for every chunk and a final `m=0`. The old code sent the whole
+        # base64 string in a single APC with `w=<px>` — but in a *transmit*
+        # `w` is the source rectangle, not the display size, and a single
+        # multi-megabyte APC is dropped by kitty, which is exactly why the
+        # poster "failed some of the time". Scaling to the pane is a separate
+        # *placement* (`a=p,c=<cols>`), emitted after the final chunk.
         local tmp="$SESSION/thumb.png"
         if ffmpeg -v error -y -i "$p" -vf "scale=${w}:-2" "$tmp" 2>/dev/null; then
-          local b64
-          b64=$(base64 -w0 "$tmp")
-          printf -v out '\033_Ga=T,f=100,m=0,w=%s;%s\033\\' "$w" "$b64"
+          local first=1 chunk
+          {
+            while IFS= read -r chunk; do
+              if [[ $first -eq 1 ]]; then
+                printf '\033_Ga=T,f=100,m=1;%s\033\\' "$chunk"; first=0
+              else
+                printf '\033_Gm=1;%s\033\\' "$chunk"
+              fi
+            done < <(base64 -w 4096 "$tmp")
+            if [[ $first -eq 1 ]]; then
+              printf '\033_Ga=T,f=100,m=0;\033\\'   # empty image edge case
+            else
+              printf '\033_Gm=0;\033\\'              # final (empty) chunk
+            fi
+            printf '\033_Ga=p,c=%s\033\\' "$c"      # scale to the pane width
+          } > "$cache"
+          out="$cache"
         fi
         ;;
       sixel)
-        out=$(chafa --format sixel --width $(( cols / 3 )) -- "$p" 2>/dev/null) || out=""
+        out=$(chafa --format sixel --width "$c" -- "$p" 2>/dev/null) || out=""
+        if [[ -n $out ]]; then
+          printf '%s' "$out" > "$cache"
+        else
+          rm -f "$cache"; return 0
+        fi
         ;;
     esac
-    if [[ -n $out ]]; then
-      printf '%s\n' "$out" > "$cache"
-    else
-      rm -f "$cache"
-      return 0
-    fi
+    [[ -z $out ]] && return 0
   fi
-  # Kitty keeps image placements across redraws and on resize, so a stale
-  # poster (previous clip or a duplicate after a resize) lingers. Clear all
-  # visible placements before emitting the fresh one.
-  [[ $IMG_PROTO == kitty ]] && printf '\033_Ga=d\033\\'
+  # Drop one line so the text card below doesn't overlap the image (kitty
+  # moves the cursor after the placement, per spec).
   cat "$cache"
+  printf '\n'
 }
 export -f render_poster
 
@@ -291,9 +337,9 @@ build_list() {
     render_clip "$name" "$theme" "$file" "$kind"
   done < "$SESSION/library.tsv"
   section_hdr "ACTIONS"
-  printf '%s\n' "$(col "$ACC" "$I_ADD  ")$(col "$TXT" "Add a video")"
-  printf '%s\n' "$(col "$MUT" "$I_RM   ")$(col "$TXT" "Remove a video")"
-  printf '%s\n' "$(col "$MUT" "$I_HELP ")$(col "$TXT" "How to use")"
+  printf '%s\n' "$(col "$ACC" "$I_ADD  ")$(col "$TXT" "Add a video (a key)")"
+  printf '%s\n' "$(col "$ACC" "$I_RM   ")$(col "$TXT" "Remove a video (r key)")"
+  printf '%s\n' "$(col "$ACC" "$I_HELP ")$(col "$TXT" "How to use (h key)")"
 }
 
 build_clips_only() {
@@ -328,7 +374,7 @@ export -f build_hero
 # prepended when present.
 build_footer() {
   local hints
-  hints="$(col "$MUT" "a") $(col "$TXT" "add") · $(col "$MUT" "r") $(col "$TXT" "remove") · $(col "$MUT" "enter") $(col "$TXT" "play") · $(col "$MUT" "?") $(col "$TXT" "help") · $(col "$MUT" "q") $(col "$TXT" "quit")"
+  hints="$(col "$MUT" "a") $(col "$TXT" "add") · $(col "$MUT" "r") $(col "$TXT" "remove") · $(col "$MUT" "enter") $(col "$TXT" "play") · $(col "$MUT" "h") $(col "$TXT" "help") · $(col "$MUT" "q") $(col "$TXT" "quit")"
   if [[ -n ${FEEDBACK:-} ]]; then
     printf '%s   %s' "$(col "$ACC" "$FEEDBACK")" "$hints"
   else
@@ -369,8 +415,8 @@ preview_cmd() {
       printf '%s\n' "Keys" "$rule" "" \
         "  Enter   play (video + palette)" \
         "  r       remove a video (picker)" \
-        "  a       add a video" \
-        "  ?       help" \
+        "  a       add a video (file picker)" \
+        "  h       help (full instructions)" \
         "  q/Esc   quit" "" \
         "  up/down or j/k  move · type to filter"
       return ;;
@@ -397,12 +443,163 @@ preview_cmd() {
 }
 export -f preview_cmd
 
-# ---------------------------------------------------------------- actions ----
+# ---------------------------------------------------------------- security ----
+# validate_video_path <path> — shared security gate for the add flow.
+# Resolves the path (following symlinks) and accepts it only when ALL hold:
+#   1. it exists and is a regular file
+#   2. the RESOLVED path is inside $HOME (catches symlink escapes: a link to
+#      /etc/hostname resolves outside home and is rejected)
+#   3. it is not under a sensitive directory (~/.ssh, ~/.gnupg,
+#      ~/.password-store, the omarchy config/state/cache trees — touching
+#      those while "adding a video" would corrupt plugin state)
+#   4. its extension is a supported video format (case-insensitive)
+# On success: prints the resolved absolute path, returns 0.
+# On failure: prints a human-readable REASON to the global $REJECT_REASON,
+# returns 1.
+validate_video_path() { # <path>
+  local f=$1 resolved
+  resolved=$(realpath -e -- "$f" 2>/dev/null) || { REJECT_REASON="file does not exist"; return 1; }
+  [[ -f $resolved ]] || { REJECT_REASON="not a regular file"; return 1; }
+  case "$resolved" in
+    "$HOME"/*) : ;;
+    *) REJECT_REASON="outside your home directory"; return 1 ;;
+  esac
+  case "$resolved" in
+    "$HOME"/.ssh/*|"$HOME"/.gnupg/*|"$HOME"/.password-store/*)
+      REJECT_REASON="sensitive directory"; return 1 ;;
+    "$HOME"/.config/omarchy/*|"$HOME"/.local/state/omarchy/*|"$HOME"/.cache/omarchy/*)
+      REJECT_REASON="omarchy internal path"; return 1 ;;
+  esac
+  case "${resolved,,}" in
+    *.mp4|*.mov|*.webm|*.mkv|*.avi) : ;;
+    *) REJECT_REASON="not a video file (mp4, mov, webm, mkv, avi)"; return 1 ;;
+  esac
+  printf '%s' "$resolved"
+  return 0
+}
+export -f validate_video_path
+
+# dir_is_safe <dir> — like validate_video_path but for a directory the user
+# is about to enter (same rules minus the file/extension checks).
+dir_is_safe() { # <dir>
+  local d=$1 resolved
+  resolved=$(realpath -e -- "$d" 2>/dev/null) || return 1
+  [[ -d $resolved ]] || return 1
+  case "$resolved" in
+    "$HOME") return 0 ;;
+    "$HOME"/*) : ;;
+    *) return 1 ;;
+  esac
+  case "$resolved" in
+    "$HOME"/.ssh/*|"$HOME"/.gnupg/*|"$HOME"/.password-store/*|"$HOME"/.ssh|"$HOME"/.gnupg) return 1 ;;
+    "$HOME"/.config/omarchy|"$HOME"/.config/omarchy/*|"$HOME"/.local/state/omarchy|"$HOME"/.local/state/omarchy/*) return 1 ;;
+  esac
+  return 0
+}
+export -f dir_is_safe
+
+# ------------------------------------------------------------- actions ----
+# video_browser <start-dir> — secure, filterable directory browser (fzf).
+# Replaces `gum file`, which had neither text filtering nor real scrolling.
+#   - lists sub-directories (enter with Enter) and video files only
+#   - type to fuzzy-filter the current level (fzf native)
+#   - scrolls (fzf native, any list length)
+#   - ctrl-u = one level up (blocked at $HOME), ctrl-r = refresh
+# Every directory the user enters and every file the user picks is
+# re-validated (dir_is_safe / validate_video_path) — the list is only a UI.
+# Prints the chosen file on success; returns 1 on cancel.
+video_browser() { # <start-dir>
+  local dir=$1 pick act
+  dir_is_safe "$dir" || { REJECT_REASON="starting directory is not allowed"; return 1; }
+  while true; do
+    rm -f "$SESSION/bract"
+    printf '%s' "$dir" > "$SESSION/brdir"   # for the preview pane
+    pick=$(browser_list "$dir" | fzf \
+        --height "60%" --border \
+        --border-label " add video · $(basename -- "$dir") " --border-label-pos 3 \
+        --prompt "filter: " \
+        --ansi \
+        --header "Enter dir → cd · Enter video → add · ctrl-u up · ctrl-r refresh · q cancel" \
+        --preview 'browser_preview {}' \
+        --preview-window "right:35%,border-rounded" \
+        --bind "ctrl-u:execute-silent(echo UP > $SESSION/bract)+abort" \
+        --bind "ctrl-r:execute-silent(echo REFRESH > $SESSION/bract)+abort+redraw" \
+        --bind "q:abort,esc:abort" \
+        --color "$(fzf_colors)" \
+        2>/dev/null) || pick=""
+    act=$(cat "$SESSION/bract" 2>/dev/null) || act=""
+    rm -f "$SESSION/bract"
+    if [[ -z $pick ]]; then
+      case $act in
+        UP)
+          # go up, blocked at $HOME
+          [[ $dir == "$HOME" ]] && return 1
+          dir=$(dirname -- "$dir")
+          continue ;;
+        REFRESH) continue ;;   # re-list the same directory
+        *) return 1 ;;          # esc/q → cancel
+      esac
+    fi
+    if [[ $pick == */ ]]; then
+      # a directory was chosen → validate, then descend
+      if dir_is_safe "$dir/${pick%/}"; then
+        dir="$dir/${pick%/}"
+      else
+        REJECT_REASON="directory not allowed: $pick"
+        return 1
+      fi
+      continue
+    fi
+    # a file was chosen → final security gate, then hand back the resolved path
+    if validate_video_path "$dir/$pick"; then
+      return 0
+    fi
+    return 1
+  done
+}
+export -f video_browser
+
+# browser_list <dir> — one entry per line: "name/" for dirs, "name" for
+# video files. Directories first, then videos, each sorted. Symlinked
+# directories are listed (-xtype d) but only accepted if dir_is_safe passes.
+browser_list() { # <dir>
+  local dir=$1 d f
+  while IFS= read -r d; do
+    dir_is_safe "$d" || continue
+    printf '%s/\n' "$(basename -- "$d")"
+  done < <(find "$dir" -mindepth 1 -maxdepth 1 \( -type d -o -xtype d \) 2>/dev/null | sort)
+  while IFS= read -r f; do
+    printf '%s\n' "$(basename -- "$f")"
+  done < <(find "$dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null \
+             | grep -iE '\.(mp4|mov|webm|mkv|avi)$' | sort)
+  return 0
+}
+export -f browser_list
+
+# browser_preview <line> — size + media info for a video, clip count for a dir.
+browser_preview() { # <line>
+  local line=$1 cur
+  cur=$(cat "$SESSION/brdir" 2>/dev/null) || cur="$HOME"
+  case $line in
+    */)
+      local n
+      n=$(find "$cur/${line%/}" -mindepth 1 -maxdepth 1 -type f 2>/dev/null \
+             | grep -ciE '\.(mp4|mov|webm|mkv|avi)$')
+      printf '%s\n' "$(col "$ACC" "directory")  $n video file(s) · press Enter to open"
+      ;;
+    *)
+      printf '%s\n' "$line"
+      clip_meta "$cur/$line" 2>/dev/null || true
+      ;;
+  esac
+}
+export -f browser_preview
+
 do_play() { # <name>
   local name=$1 row theme file
   row=$(grep -P "^\Q${name}\E\t" "$SESSION/library.tsv" 2>/dev/null | head -1) || true
   [[ -z $row ]] && return 1
-  IFS=$'	' read -r _ theme file _ <<<"$row"
+  IFS=$'\t' read -r _ theme file _ <<<"$row"
   if [[ $theme == "$CUR_THEME" ]]; then
     omarchy theme bg set "$file"
   else
@@ -413,11 +610,25 @@ do_play() { # <name>
 }
 
 do_add() {
-  local start=$HOME/Videos
-  [[ -d $start ]] || start=$HOME
+  # Secure directory navigation: start in Downloads (where the user's clips
+  # live), fall back to Videos/, then $HOME. The browser validates every
+  # step; validate_video_path is the final gate on the chosen file.
+  local start="" d
+  for d in "$HOME/Downloads" "$HOME/Videos" "$HOME"; do
+    if [[ -d $d ]] && dir_is_safe "$d"; then start=$d; break; fi
+  done
+  if [[ -z $start ]]; then
+    FEEDBACK="add: no usable start directory"
+    return 0
+  fi
   local f
-  f=$(gum file "$start") || return 0
+  if ! f=$(video_browser "$start"); then
+    [[ -n ${REJECT_REASON:-} ]] && FEEDBACK="add rejected: ${REJECT_REASON}"
+    REJECT_REASON=""
+    return 0
+  fi
   [[ -z $f ]] && return 0
+
   local name=${f##*/}; name=${name%.*}
   # The plugin has no volume control: a clip with an audio track would be
   # heard. Offer to drop the track (lossless remux) before adding; if the
@@ -483,32 +694,46 @@ How to use
   Remove      r, or the "Remove a video" entry —
               opens a picker to choose the clip
   Add         a, or the "Add a video" entry — file
-              picker, then Aether extracts the
-              palette and registers the clip
-  Help        ?   ·   Quit  q / Esc
+              picker (starts in Downloads), then
+              Aether extracts the palette and
+              registers the clip
+  Help        h or ?  ·   Quit  q / Esc
 
   [own palette]  the clip has its own theme; its
   colors were extracted from the clip (Aether)
   [library]      the clip plays in the library
   theme's palette
 
-  Add: any video works (mp4/mov/webm). If it has
-  an audio track you are asked to drop it (the
-  plugin has no volume control). Adding never
+  Add: any video works (mp4/mov/webm/mkv/avi). If
+  it has an audio track you are asked to drop it
+  (the plugin has no volume control). Adding never
   changes the current wallpaper — Enter on the
   clip plays it. The clip is mirrored into the
-  library theme with hardlinks (zero extra
-  space).
+  library theme with hardlinks (zero extra space).
   Remove: deletes the per-clip theme, library
   copies and the cycle-list entry. If the clip
   is the playing one, another video takes over
   first. Your original file is never touched.
 EOF
 )
-  clear
-  gum style --border rounded --border foreground:"$ACC" \
-    --margin "0 1" --padding "1 2" --width 64 -- "$text"
-  read -r -p "  press Enter to go back…" _ 2>/dev/null || true
+  # Use the controlling terminal directly to work within fzf context
+  local tty_dev
+  tty_dev=$(tty 2>/dev/null) || tty_dev="/dev/tty"
+  
+  {
+    clear
+    printf '\n'
+    if command -v gum >/dev/null 2>&1; then
+      printf '%s\n' "$text" | gum style --border rounded --border-foreground "$ACC" \
+        --margin "0 1" --padding "1 2" --width 64 2>/dev/null || printf '%s\n' "$text"
+    else
+      printf '%s\n' "$text"
+    fi
+    printf '\n'
+    printf '  Press any key to go back…'
+    read -r -s -n 1
+    printf '\n'
+  } <"$tty_dev" >"$tty_dev" 2>&1
 }
 
 # ------------------------------------------------------------------- main ----
@@ -544,8 +769,9 @@ main() {
         --preview-window "right:33%,border-rounded" \
         --bind "a:execute-silent(echo ADD > $SESSION/action)+abort" \
         --bind "r:execute-silent(echo REMOVE > $SESSION/action)+abort" \
+        --bind "h:execute-silent(echo HELP > $SESSION/action)+abort" \
         --bind "?:execute-silent(echo HELP > $SESSION/action)+abort" \
-        --bind "q:abort" \
+        --bind "q:abort,esc:abort" \
         --color "$(fzf_colors)" \
         2>/dev/null) || rc=$?
 
@@ -582,4 +808,8 @@ main() {
   done
 }
 
-main "$@"
+# Testability: with VM_NO_MAIN=1 the script only loads its functions (used
+# by the unit tests); normally it runs the TUI.
+if [[ -z ${VM_NO_MAIN:-} ]]; then
+  main "$@"
+fi
