@@ -17,7 +17,7 @@
 #   preview pane (right 1/3): poster thumbnail (kitty protocol, or
 #   chafa→sixel when chafa is installed) + metadata card + action hints.
 #
-# Keys: Enter play · r remove · a add · h/? help · q/Esc quit
+# Keys: Enter play · r remove · a add (multi/bulk) · e palette · h/? help · q/Esc quit
 set -euo pipefail
 
 # ---------------------------------------------------------------- paths ----
@@ -78,45 +78,50 @@ declare_icons() {
 
 # ---------------------------------------------------------------- library ----
 # $SESSION/library.tsv: name \t theme \t file \t kind(own|lib)
-# Dedup: per-clip themes (with .video-theme marker) claim their clips;
-# library themes drop clips already claimed.
-# Note: supports both old structure (videos/ dir) and legacy (mp4 in backgrounds/)
+# Dedup (order-independent, 2-pass): per-clip themes (with a .video-theme
+# marker) CLAIM their clips first; library themes only emit a clip if no
+# per-clip theme claimed it. This is a genuine fix, not the old single-pass
+# `claimed` map: that one depended on glob order, so a clip whose per-clip
+# theme sorted AFTER the library theme (e.g. video-yorha-* after
+# video-wallpaper) was emitted by the library as `lib` before the per-clip
+# theme could claim it -> listed twice (the yorha duplicate).
+# Note: supports both old structure (videos/ dir) and legacy (mp4 in backgrounds/).
 scan_library() {
   local tmp="$SESSION/scan.tmp"
   : > "$tmp"
   local t b perclip f base
-  local -A claimed=()
+  local -A claim=()
+  # pass 1: per-clip themes claim their clips (every clip they hold is `own`).
   for t in "$THEMES_USER"/* "$THEMES_SYS"/*; do
-    # Must have backgrounds dir; videos dir is optional (legacy themes may use backgrounds/)
+    [[ -d $t && -d $t/backgrounds && -f $t/.video-theme ]] || continue
+    b=$(basename "$t")
+    for f in "$t"/videos/*.mp4; do [[ -e $f ]] && claim["$(basename "$f" .mp4)"]=1; done
+    for f in "$t"/backgrounds/*.mp4; do [[ -e $f ]] && claim["$(basename "$f" .mp4)"]=1; done
+  done
+  # pass 2: emit. per-clip themes emit their clips as `own`; library themes
+  # emit only the clips no per-clip theme claimed (as `lib`).
+  for t in "$THEMES_USER"/* "$THEMES_SYS"/*; do
     [[ -d $t && -d $t/backgrounds ]] || continue
     b=$(basename "$t")
     perclip=0
     [[ -f $t/.video-theme ]] && perclip=1
-    
-    # Scan videos/ directory first (new structure)
     if [[ -d $t/videos ]]; then
       for f in "$t"/videos/*.mp4; do
         [[ -e $f ]] || continue
         base=$(basename "$f" .mp4)
         if [[ $perclip == 1 ]]; then
           printf '%s\t%s\t%s\t%s\n' "$base" "$b" "$f" own >> "$tmp"
-          claimed["$base"]=1
-        elif [[ -z ${claimed["$base"]:-} ]]; then
+        elif [[ -z ${claim["$base"]:-} ]]; then
           printf '%s\t%s\t%s\t%s\n' "$base" "$b" "$f" lib >> "$tmp"
         fi
       done
     fi
-    
-    # Also scan backgrounds/ for mp4 files (legacy structure for themes like event-horizon)
-    # Skip if already claimed by videos/ scan
     for f in "$t"/backgrounds/*.mp4; do
       [[ -e $f ]] || continue
       base=$(basename "$f" .mp4)
-      [[ -z ${claimed["$base"]:-} ]] || continue
       if [[ $perclip == 1 ]]; then
         printf '%s\t%s\t%s\t%s\n' "$base" "$b" "$f" own >> "$tmp"
-        claimed["$base"]=1
-      elif [[ -z ${claimed["$base"]:-} ]]; then
+      elif [[ -z ${claim["$base"]:-} ]]; then
         printf '%s\t%s\t%s\t%s\n' "$base" "$b" "$f" lib >> "$tmp"
       fi
     done
@@ -218,6 +223,16 @@ detect_img_proto() {
 # text card when there is no image protocol or no poster. Output is cached in
 # $SESSION/poster-<base>-<w>.img and regenerated only when the poster or the
 # target width changes.
+# clear_graphics — wipe any image the terminal is still showing (kitty pinned
+# the last poster via `a=p`, so it outlives fzf redrawing text over the pane).
+# Called before every text-only preview (action rows, the add browser) so a
+# stale miniature never floats over the text. No-op on non-kitty terminals.
+clear_graphics() {
+  [[ $IMG_PROTO == kitty ]] || return 0
+  printf '\033_Ga=d\033\\'
+}
+export -f clear_graphics
+
 render_poster() { # <name>
   local name=$1 p cache w cols c iw ih rows i
   p=$(poster_for "$name")
@@ -229,25 +244,41 @@ render_poster() { # <name>
   [[ -z $p || -z $IMG_PROTO || $IMG_PROTO == none ]] && return 0
   # Dynamic target: the preview pane is fzf's right 33%. Recomputed on every
   # render (fzf re-runs the preview on focus/resize/redraw) so the poster
-  # follows the terminal size. `c` is the pane width in COLUMNS; `w` is the
+  # follows the terminal size. `c` = box width in COLUMNS (kitty `a=p,c=,r=`
+  # are both in cells; the image is scaled to fit that cell box); `w` = the
   # source pixel width we ask ffmpeg for (~8 px per monospace cell).
   cols=$(tput cols 2>/dev/null) || cols=80
   (( cols < 40 )) && cols=40
+  rows_total=$(tput lines 2>/dev/null) || rows_total=24
+  (( rows_total < 12 )) && rows_total=24
   c=$(( cols / 3 - 2 )); (( c < 12 )) && c=12   # minus the preview border
-  w=$(( c * 8 )); (( w > 720 )) && w=720
-  # Rows the image occupies when displayed `c` columns wide, from the poster's
-  # own aspect ratio (ih/iw). Drives both the kitty placement box (a=p,c,r)
-  # and the newline padding, so the text card always starts exactly below the
-  # image — no pixel/cell conversion needed.
-  rows=0
+  # Usable height in rows: the fzf body is ~90% of the terminal and the
+  # header/footer eat a few rows, so ~60% of the rows is a safe cap. This is
+  # the HEIGHT bound (P4: it previously only capped width, so a wide/short
+  # clip could push the text card off the pane).
+  maxrows=$(( rows_total * 6 / 10 )); (( maxrows < 10 )) && maxrows=10
   # ffprobe csv is "W,H" — split on the comma (read's default IFS is
   # whitespace, which would leave ih empty).
   IFS=',' read -r iw ih < <(ffprobe -v error -select_streams v:0 \
       -show_entries stream=width,height -of csv=p=0 "$p" 2>/dev/null) || true
   iw=${iw:-0}; ih=${ih:-0}
+  # Box width in columns (starts at the full pane width `c`), and the rows
+  # the image occupies at that width from the poster's aspect ratio (ih/iw).
+  boxc=$c
+  rows=0
   if (( iw > 0 && ih > 0 )); then
     rows=$(( (c * ih + iw / 2) / iw )); (( rows < 1 )) && rows=1
+    # Fit the height: if the full-pane width would exceed maxrows, shrink the
+    # box width in COLUMNS (preserving aspect) so rows <= maxrows.
+    if (( rows > maxrows )); then
+      boxc=$(( (c * maxrows + ih / 2) / ih )); (( boxc < 8 )) && boxc=8
+      rows=$(( (boxc * ih + iw / 2) / iw )); (( rows < 1 )) && rows=1
+      (( rows > maxrows )) && rows=$maxrows
+    fi
   fi
+  # Pixel resolution follows the final box width (~8 px per monospace cell),
+  # so the cached PNG matches what the placement box will display.
+  w=$(( boxc * 8 )); (( w > 720 )) && w=720
   # basename removes the directory; strip any image extension to get a clean
   # cache key (remove everything from the first dot).
   cache="$SESSION/poster-$(basename "$p" | sed 's/\.[^.]*$//')-$w.img"
@@ -283,7 +314,7 @@ render_poster() { # <name>
         fi
         ;;
       sixel)
-        out=$(chafa --format sixel --width "$c" -- "$p" 2>/dev/null) || out=""
+        out=$(chafa --format sixel --width "$boxc" -- "$p" 2>/dev/null) || out=""
         if [[ -n $out ]]; then
           printf '%s' "$out" > "$cache"
         else
@@ -301,7 +332,7 @@ render_poster() { # <name>
   cat "$cache"
   if [[ $IMG_PROTO == kitty ]]; then
     if (( rows > 0 )); then
-      printf '\033_Ga=p,c=%s,r=%s\033\\' "$c" "$rows"
+      printf '\033_Ga=p,c=%s,r=%s\033\\' "$boxc" "$rows"
       for ((i=0;i<rows;i++)); do printf '\n'; done
     fi
   else
@@ -341,6 +372,17 @@ row_file() {
 }
 export -f row_file
 
+# name_to_theme <name> → theme dir for a clip (from the TSV, single source of
+# truth). Used by the 'r' key to remove the highlighted clip directly.
+name_to_theme() {
+  local row
+  row=$(grep -P "^\Q${1}\E\t" "$SESSION/library.tsv" 2>/dev/null | head -1) || true
+  [[ -z $row ]] && return 0
+  IFS=$'\t' read -r _ t _ <<<"$row"
+  printf '%s' "$t"
+}
+export -f name_to_theme
+
 # section header line (fzf treats a leading "=== " as a section divider)
 section_hdr() { # <text>
   printf '=== %s\n' "$(col "$MUT" "$1")"
@@ -355,8 +397,9 @@ build_list() {
     render_clip "$name" "$theme" "$file" "$kind"
   done < "$SESSION/library.tsv"
   section_hdr "ACTIONS"
-  printf '%s\n' "$(col "$ACC" "$I_ADD  ")$(col "$TXT" "Add a video (a key)")"
+  printf '%s\n' "$(col "$ACC" "$I_ADD  ")$(col "$TXT" "Add a video (a key) · multi-select / bulk")"
   printf '%s\n' "$(col "$ACC" "$I_RM   ")$(col "$TXT" "Remove a video (r key)")"
+  printf '%s\n' "$(col "$ACC" "$I_HELP ")$(col "$TXT" "Edit palette (e key) · Aether re-extract")"
   printf '%s\n' "$(col "$ACC" "$I_HELP ")$(col "$TXT" "How to use (h key)")"
 }
 
@@ -392,7 +435,7 @@ export -f build_hero
 # prepended when present.
 build_footer() {
   local hints
-  hints="$(col "$MUT" "a") $(col "$TXT" "add") · $(col "$MUT" "r") $(col "$TXT" "remove") · $(col "$MUT" "enter") $(col "$TXT" "play") · $(col "$MUT" "h") $(col "$TXT" "help") · $(col "$MUT" "q") $(col "$TXT" "quit")"
+  hints="$(col "$MUT" "a") $(col "$TXT" "add") · $(col "$MUT" "r") $(col "$TXT" "remove") · $(col "$MUT" "e") $(col "$TXT" "palette") · $(col "$MUT" "enter") $(col "$TXT" "play") · $(col "$MUT" "h") $(col "$TXT" "help") · $(col "$MUT" "q") $(col "$TXT" "quit")"
   if [[ -n ${FEEDBACK:-} ]]; then
     printf '%s   %s' "$(col "$ACC" "$FEEDBACK")" "$hints"
   else
@@ -406,20 +449,22 @@ preview_cmd() {
   local line plain name row theme file kind status rule
   line=$1
   plain=$(strip_ansi <<<"$line")
+  clear_graphics   # wipe the previous poster (pinned via kitty a=p) before any text
   printf '%s' "$plain" > "$SESSION/hl"
   rule="────────────────────────────────────────"
   case $plain in
     *"Add a video"*)
-      printf '%s\n' "Add a video" "$rule" "" \
-        "Pick a clip (mp4/mov/webm). If it carries an audio track" \
-        "you are asked to drop it (lossless remux — the plugin has" \
-        "no volume control). Its palette is then extracted with" \
-        "Aether, a per-clip theme is created, and the clip is" \
-        "mirrored into the library theme (hardlinks — zero extra" \
-        "space). Adding never changes the current wallpaper —" \
-        "press Enter on the clip to play it." "" \
-        "Tip: rename the file before adding; the clip and its" \
-        "theme are named after the file."
+      printf '%s\n' "Add a video(s)" "$rule" "" \
+        "Browse (starts in Downloads). Select several with" \
+        "space, or grab a whole folder with ctrl-b. If any" \
+        "clip carries an audio track you are asked once to" \
+        "drop it (lossless remux — the plugin has no volume" \
+        "control). Each clip then gets its own Aether palette" \
+        "and a per-clip theme, and is mirrored into the" \
+        "library theme (hardlinks — zero extra space)." \
+        "Adding never changes the current wallpaper — press" \
+        "Enter on a clip to play it." "" \
+        "$(col "$MUT" "space pick · ctrl-a all · ctrl-b bulk · ctrl-d enter dir")"
       return ;;
     *"Remove a video"*)
       printf '%s\n' "Remove a video" "$rule" "" \
@@ -429,11 +474,22 @@ preview_cmd() {
         "video takes over first. Your original clip file is" \
         "never touched."
       return ;;
+    *"Edit palette"*)
+      printf '%s\n' "Edit palette (Aether)" "$rule" "" \
+        "Re-derive the clip's color palette from a fresh" \
+        "poster frame with Aether, then re-apply the theme." \
+        "Use it when the auto-picked palette is not to your" \
+        "taste. Only [own palette] clips qualify — they have" \
+        "a per-clip theme. [library] clips play the shared" \
+        "library palette, so there is nothing to re-extract." "" \
+        "$(col "$MUT" "e → re-extract the highlighted clip")"
+      return ;;
     *"How to use"*)
       printf '%s\n' "Keys" "$rule" "" \
         "  Enter   play (video + palette)" \
-        "  r       remove a video (picker)" \
-        "  a       add a video (file picker)" \
+        "  r       remove the highlighted clip (ask to confirm)" \
+        "  a       add — multi-select, or whole-folder bulk" \
+        "  e       re-extract a clip's palette (Aether)" \
         "  h       help (full instructions)" \
         "  q/Esc   quit" "" \
         "  up/down or j/k  move · type to filter"
@@ -457,7 +513,7 @@ preview_cmd() {
     "status    $(col "$ACC" "$status")" \
     "media     $(clip_meta "$file")" \
     "" \
-    "$(col "$MUT" "Enter → play · r → remove")"
+    "$(col "$MUT" "Enter → play · r → remove · e → palette")"
 }
 export -f preview_cmd
 
@@ -517,33 +573,57 @@ dir_is_safe() { # <dir>
 export -f dir_is_safe
 
 # ------------------------------------------------------------- actions ----
-# video_browser <start-dir> — secure, filterable directory browser (fzf).
-# Replaces `gum file`, which had neither text filtering nor real scrolling.
-#   - lists sub-directories (enter with Enter) and video files only
-#   - type to fuzzy-filter the current level (fzf native)
-#   - scrolls (fzf native, any list length)
-#   - ctrl-u = one level up (blocked at $HOME), ctrl-r = refresh
-# Every directory the user enters and every file the user picks is
-# re-validated (dir_is_safe / validate_video_path) — the list is only a UI.
-# Prints the chosen file on success; returns 1 on cancel.
+# collect_videos <dir> — append every VALIDATED video file in <dir> to
+# $SESSION/picked (one resolved path per line). Used by the ctrl-b bulk action.
+collect_videos() { # <dir>
+  local d=$1 f base r
+  while IFS= read -r f; do
+    [[ -z $f ]] && continue
+    base=$(basename -- "$f")
+    r=$(validate_video_path "$d/$base" 2>/dev/null) || continue
+    printf '%s\n' "$r" >> "$SESSION/picked"
+  done < <(find "$d" -mindepth 1 -maxdepth 1 -type f 2>/dev/null \
+             | grep -iE '\.(mp4|mov|webm|mkv|avi)$' | sort)
+  return 0
+}
+export -f collect_videos
+
+# video_browser <start-dir> — secure, MULTI-select directory browser (fzf).
+# Replaces `gum file` (no filtering/scrolling). Lists sub-directories (with a
+# trailing '/') and video files only, at the current level. Keys:
+#   space     toggle selection of one entry (pick several, Enter to add them all)
+#   ctrl-a    select ALL entries at this level (directories are dropped on submit)
+#   ctrl-b    BULK: add every video file in this directory (one keystroke)
+#   ctrl-d    descend into the highlighted directory
+#   ctrl-u    one level up (blocked at $HOME)
+#   ctrl-r    refresh the current level
+#   q / Esc   cancel
+# Every directory entered and every file added is re-validated (dir_is_safe /
+# validate_video_path) — the list is only a UI. On success it writes the
+# resolved video paths (one per line) to $SESSION/picked (non-empty) and
+# returns 0; on cancel it leaves $SESSION/picked empty and returns 1.
 video_browser() { # <start-dir>
-  local dir=$1 pick act
+  local dir=$1 pick act dline line r
   dir_is_safe "$dir" || { REJECT_REASON="starting directory is not allowed"; return 1; }
+  : > "$SESSION/picked"
   while true; do
     rm -f "$SESSION/bract"
     printf '%s' "$dir" > "$SESSION/brdir"   # for the preview pane
     # NB: no `+redraw` on the ctrl-r bind — fzf 0.74.x has no `redraw` action
-    # and dies with "unknown action: redraw", killing the whole browser (the
-    # error went to silenced stderr, so `a` just looked like a no-op).
-    # `+abort` is enough: the REFRESH branch below re-lists the same directory.
+    # and dies with "unknown action: redraw", killing the whole browser.
+    # `+abort` is enough: the branch below re-lists / acts on the same directory.
     pick=$(browser_list "$dir" | fzf \
+        --multi \
         --height "60%" --border \
-        --border-label " add video · $(basename -- "$dir") " --border-label-pos 3 \
+        --border-label " add video(s) · $(basename -- "$dir") " --border-label-pos 3 \
         --prompt "filter: " \
         --ansi \
-        --header "Enter dir → cd · Enter video → add · ctrl-u up · ctrl-r refresh · q cancel" \
+        --header "space pick · ctrl-a all · ctrl-b bulk dir · ctrl-d enter dir · ctrl-u up · ctrl-r refresh · q cancel" \
         --preview 'browser_preview {}' \
         --preview-window "right:35%,border-rounded" \
+        --bind "ctrl-a:select-all" \
+        --bind "ctrl-b:execute-silent(echo BULK > $SESSION/bract)+abort" \
+        --bind "ctrl-d:execute-silent(printf 'DESCEND %s\n' {} > $SESSION/bract)+abort" \
         --bind "ctrl-u:execute-silent(echo UP > $SESSION/bract)+abort" \
         --bind "ctrl-r:execute-silent(echo REFRESH > $SESSION/bract)+abort" \
         --bind "q:abort,esc:abort" \
@@ -551,32 +631,46 @@ video_browser() { # <start-dir>
         2>/dev/null) || pick=""
     act=$(cat "$SESSION/bract" 2>/dev/null) || act=""
     rm -f "$SESSION/bract"
-    if [[ -z $pick ]]; then
+
+    if [[ -n $act ]]; then
       case $act in
+        BULK)
+          # M2: add every video file in this directory (one keystroke).
+          : > "$SESSION/picked"
+          collect_videos "$dir"
+          if [[ -s $SESSION/picked ]]; then return 0
+          else FEEDBACK="no video files in $(basename -- "$dir")"; return 1; fi ;;
+        DESCEND*)
+          dline="${act#DESCEND }"
+          if [[ $dline == */ ]] && dir_is_safe "$dir/${dline%/}"; then
+            dir="$dir/${dline%/}"
+            continue
+          elif [[ $dline == */ ]]; then
+            REJECT_REASON="directory not allowed: $dline"
+            return 1
+          fi
+          ;;   # a file was highlighted → nothing to descend into; re-list
         UP)
-          # go up, blocked at $HOME
           [[ $dir == "$HOME" ]] && return 1
-          dir=$(dirname -- "$dir")
-          continue ;;
+          dir=$(dirname -- "$dir"); continue ;;
         REFRESH) continue ;;   # re-list the same directory
-        *) return 1 ;;          # esc/q → cancel
+        *) : ;;
       esac
     fi
-    if [[ $pick == */ ]]; then
-      # a directory was chosen → validate, then descend
-      if dir_is_safe "$dir/${pick%/}"; then
-        dir="$dir/${pick%/}"
-      else
-        REJECT_REASON="directory not allowed: $pick"
-        return 1
-      fi
-      continue
+
+    if [[ -z $pick ]]; then
+      return 1   # Esc/q (or Enter with no selection) → cancel
     fi
-    # a file was chosen → final security gate, then hand back the resolved path
-    if validate_video_path "$dir/$pick"; then
-      return 0
-    fi
-    return 1
+    # Enter with a multi-selection: keep only validated video files (a
+    # selected directory is dropped — it is not a clip).
+    : > "$SESSION/picked"
+    while IFS= read -r line; do
+      [[ -z $line ]] && continue
+      [[ $line == */ ]] && continue
+      r=$(validate_video_path "$dir/$line" 2>/dev/null) || continue
+      printf '%s\n' "$r" >> "$SESSION/picked"
+    done <<< "$pick"
+    [[ -s $SESSION/picked ]] && return 0 || return 1
   done
 }
 export -f video_browser
@@ -601,6 +695,7 @@ export -f browser_list
 # browser_preview <line> — size + media info for a video, clip count for a dir.
 browser_preview() { # <line>
   local line=$1 cur
+  clear_graphics   # the main list's poster (pinned via kitty a=p) must not persist
   cur=$(cat "$SESSION/brdir" 2>/dev/null) || cur="$HOME"
   case $line in
     */)
@@ -618,15 +713,24 @@ browser_preview() { # <line>
 export -f browser_preview
 
 do_play() { # <name>
-  local name=$1 row theme file
+  local name=$1 row theme file poster tdir
   row=$(grep -P "^\Q${name}\E\t" "$SESSION/library.tsv" 2>/dev/null | head -1) || true
   [[ -z $row ]] && return 1
   IFS=$'\t' read -r _ theme file _ <<<"$row"
+  # The background must be the clip's POSTER (image), not the video: the
+  # plugin derives the playing clip from the background's base name and keeps
+  # the image underneath as the image-fallback. Pointing the background at the
+  # .mp4 broke both (a freshly-added clip then stayed a static frame until the
+  # theme was changed elsewhere). Poster: <theme>/backgrounds/<name>.png, where
+  # <theme> is the directory that holds the video file.
+  tdir=$(dirname "$(dirname "$file")")
+  poster="$tdir/backgrounds/$name.png"
+  [[ -f $poster ]] || poster="$file"   # legacy fallback if no paired poster
   if [[ $theme == "$CUR_THEME" ]]; then
-    omarchy theme bg set "$file"
+    omarchy theme bg set "$poster"
   else
     omarchy theme set "$theme"
-    omarchy theme bg set "$file"
+    omarchy theme bg set "$poster"
   fi
   FEEDBACK="playing $name · $theme"
 }
@@ -634,7 +738,7 @@ do_play() { # <name>
 do_add() {
   # Secure directory navigation: start in Downloads (where the user's clips
   # live), fall back to Videos/, then $HOME. The browser validates every
-  # step; validate_video_path is the final gate on the chosen file.
+  # step; validate_video_path is the final gate on each chosen file.
   local start="" d
   for d in "$HOME/Downloads" "$HOME/Videos" "$HOME"; do
     if [[ -d $d ]] && dir_is_safe "$d"; then start=$d; break; fi
@@ -643,43 +747,72 @@ do_add() {
     FEEDBACK="add: no usable start directory"
     return 0
   fi
-  local f
-  if ! f=$(video_browser "$start"); then
+  # M1 (multi-select) + M2 (bulk): the browser now returns SEVERAL clips —
+  # whatever the user space-picked, ctrl-a'd, or ctrl-b (bulk) collected —
+  # in $SESSION/picked, one resolved path per line.
+  if ! video_browser "$start"; then
     [[ -n ${REJECT_REASON:-} ]] && FEEDBACK="add rejected: ${REJECT_REASON}"
     REJECT_REASON=""
     return 0
   fi
-  [[ -z $f ]] && return 0
+  local n
+  n=$(wc -l < "$SESSION/picked" 2>/dev/null) || n=0
+  [[ $n -eq 0 ]] && return 0
 
-  local name=${f##*/}; name=${name%.*}
   # The plugin has no volume control: a clip with an audio track would be
-  # heard. Offer to drop the track (lossless remux) before adding; if the
-  # user declines, abort (the add would fail anyway).
+  # heard. If ANY selected clip carries audio, ask ONCE to drop the track
+  # (lossless remux) from all of them; if the user declines, abort the whole
+  # batch (the adds would fail anyway).
+  local with_audio=0 f
+  while IFS= read -r f; do
+    if ffprobe -v error -select_streams a -show_entries stream=codec_type \
+         "$f" 2>/dev/null | grep -q audio; then
+      with_audio=1; break
+    fi
+  done < "$SESSION/picked"
   local strip=""
-  if ffprobe -v error -select_streams a -show_entries stream=codec_type \
-       "$f" 2>/dev/null | grep -q audio; then
+  if [[ $with_audio -eq 1 ]]; then
     # gum 2.x confirm takes the prompt as a POSITIONAL arg (no --title /
     # --description flags — they exist in gum 1.x only and abort on 2.x).
     if gum confirm \
          "Drop the audio track?
-'$name' carries audio; the plugin has no volume control and would play it.
-Drop the track now (lossless remux)?" \
+Some of the $n selected clip(s) carry audio; the plugin has no volume
+control and would play them. Drop the track from all (lossless remux)?" \
          --affirmative "Drop audio" --negative "Cancel"; then
       strip="--strip-audio"
     else
-      FEEDBACK="aborted: $name has an audio track"
+      FEEDBACK="aborted: selected clips have an audio track"
       return 0
     fi
   fi
-  # --no-activate: adding must not yank the current wallpaper.
-  if gum spin --spinner dot --title "creating theme (Aether + library mirror)" \
-       --show-output -- "$PLUGIN_BIN/video-add.sh" $strip --no-activate "$f" 2>&1; then
-    FEEDBACK="added $name"
-  else
-    FEEDBACK="add failed: $name"
-  fi
-  drain_tty   # swallow any key typed while the spinner was up (else it leaks
+
+  # Add every clip. video-add.sh is already idempotent (it refuses a name that
+  # already exists), so re-adding is a clean "failed", not a duplicate. Skip
+  # the same base name twice within this batch as a safety net.
+  local name added=0 failed=0 skipped=0
+  local -A seen=()
+  while IFS= read -r f; do
+    [[ -z $f ]] && continue
+    name=${f##*/}; name=${name%.*}
+    if [[ -n ${seen[$name]:-} ]]; then skipped=$((skipped+1)); continue; fi
+    seen[$name]=1
+    # --no-activate: adding must not yank the current wallpaper. Output is
+    # suppressed so the spinner stays clean during a batch; the summary below
+    # reports the outcome.
+    if gum spin --spinner dot --title "adding $name ($added/$n)" \
+         -- "$PLUGIN_BIN/video-add.sh" $strip --no-activate "$f" >/dev/null 2>&1; then
+      added=$((added+1))
+    else
+      failed=$((failed+1))
+    fi
+  done < "$SESSION/picked"
+  drain_tty   # swallow any key typed while a spinner was up (else it leaks
               # into the next fzf — e.g. 'h' opens help right after an add)
+
+  local msg="added $added of $n"
+  [[ $failed -gt 0 ]]    && msg="$msg · $failed failed"
+  [[ $skipped -gt 0 ]]   && msg="$msg · $skipped dup"
+  FEEDBACK="$msg"
 }
 
 do_remove() { # <name>
@@ -698,6 +831,84 @@ Deletes its per-clip theme, library copies and cycle entry. Your original clip f
   fi
   drain_tty   # swallow any key typed while the spinner was up (else it leaks
               # into the next fzf — e.g. 'h' opens help right after a removal)
+}
+
+# remove_one — confirm-and-remove a specific clip (no picker). Used by the
+# 'r' key, which removes the HIGHLIGHTED clip directly (no list, no extra hop).
+# do_remove shows the gum confirm, so a mistyped clip is still caught.
+remove_one() { # <name>
+  [[ -z ${1:-} ]] && return 0
+  do_remove "$1"
+}
+
+# edit_palette — M4: re-derive a clip's color palette with Aether from a fresh
+# poster frame, then sync the generated configs over the per-clip theme and
+# re-apply it if it is the active theme. Only [own palette] clips qualify (they
+# have a per-clip theme); a [library] clip has no own palette to edit.
+# backgrounds/ and videos/ are left untouched so the poster and the hardlinked
+# video (shared with the library) survive the re-extract.
+edit_palette() { # <name>
+  local name=$1 row theme kind poster tdir gen item base
+  row=$(grep -P "^\Q${name}\E\t" "$SESSION/library.tsv" 2>/dev/null | head -1) || true
+  [[ -z $row ]] && { FEEDBACK="edit palette: unknown clip '$name'"; return 0; }
+  IFS=$'\t' read -r _ theme _ kind <<<"$row"
+  if [[ $kind != own ]]; then
+    FEEDBACK="edit palette: '$name' is a library clip — no own palette to edit"
+    return 0
+  fi
+  poster=$(poster_for "$name")
+  [[ -f ${poster:-/nonexistent} ]] || { FEEDBACK="edit palette: no poster for '$name'"; return 0; }
+  tdir="$THEMES_USER/$theme"
+  [[ -d $tdir ]] || { FEEDBACK="edit palette: theme dir missing ($theme)"; return 0; }
+  command -v aether >/dev/null 2>&1 || { FEEDBACK="edit palette: aether not installed"; return 0; }
+  gen=$(mktemp -d "$CACHE_ROOT/aether.XXXXXX") || { FEEDBACK="edit palette: mktemp failed"; return 0; }
+  # Re-derive the palette from the poster, then sync Aether's generated configs
+  # (colors.toml + terminal/tool configs) over the existing theme — skipping
+  # backgrounds/ (the poster) and videos/ (the hardlinked clip) and the plugin
+  # markers so they are preserved.
+  if gum spin --spinner dot --title "re-extracting palette with Aether" \
+       -- aether --generate "$poster" --no-apply --output "$gen" >/dev/null 2>&1; then
+    while IFS= read -r item; do
+      [[ -z $item ]] && continue
+      base=$(basename -- "$item")
+      case "$base" in
+        backgrounds|videos|.video-theme|.aether-managed) continue ;;
+      esac
+      if [[ -d $item ]]; then
+        rm -rf "$tdir/$base"; cp -r "$item" "$tdir/$base" 2>/dev/null || true
+      else
+        cp -f "$item" "$tdir/$base" 2>/dev/null || true
+      fi
+    done < <(find "$gen" -mindepth 1 -maxdepth 1)
+    rm -rf "$gen"
+    # Re-apply when this is the active theme so the new palette shows at once;
+    # the TUI re-themes itself on the next loop (load_palette re-reads the file).
+    if [[ $theme == "$CUR_THEME" ]]; then
+      omarchy theme set "$theme" >/dev/null 2>&1 || true
+    fi
+    FEEDBACK="palette re-extracted: $name"
+  else
+    rm -rf "$gen"
+    FEEDBACK="palette re-extract failed: $name (aether error)"
+  fi
+  drain_tty   # swallow any key typed while the spinner was up
+}
+export -f edit_palette
+
+# palette_picker — picker for the "Edit palette" action row: list the clips,
+# the user chooses one, then edit_palette re-extracts its palette.
+palette_picker() {
+  local pick
+  pick=$(build_clips_only | fzf \
+      --height "90%" --border --no-scrollbar \
+      --border-label "  choose a clip to re-extract its palette " --border-label-pos 3 \
+      --prompt "  " --ansi \
+      --preview "preview_cmd {}" \
+      --preview-window "right:33%,border-rounded" \
+      --bind "q:abort" \
+      --color "$(fzf_colors)" \
+      2>/dev/null) || pick=""
+  [[ -n $pick ]] && edit_palette "$(line_to_name "$pick")"
 }
 
 # Picker used both by the "Remove a video" entry and the 'r' key: lists only
@@ -724,12 +935,16 @@ How to use
   Navigate    up/down  ·  j/k  ·  type to filter
   Play        Enter on a clip — switches the video
               and the palette (per-clip themes)
-  Remove      r, or the "Remove a video" entry —
-              opens a picker to choose the clip
-  Add         a, or the "Add a video" entry — file
-              picker (starts in Downloads), then
-              Aether extracts the palette and
-              registers the clip
+  Remove      r on a clip — asks to confirm, then
+              removes that clip (no picker). The
+              "Remove a video" entry opens a picker
+  Add         a — file browser. Space selects
+              several at once; ctrl-b adds the whole
+              folder; Enter on a clip adds it. Then
+              Aether extracts the palette
+  Palette     e on a clip — re-extracts its palette
+              with Aether (own-palette clips only).
+              The "Edit palette" entry opens a picker
   Help        h or ?  ·   Quit  q / Esc
 
   [own palette]  the clip has its own theme; its
@@ -743,6 +958,8 @@ How to use
   changes the current wallpaper — Enter on the
   clip plays it. The clip is mirrored into the
   library theme with hardlinks (zero extra space).
+  Re-adding a clip that already exists is refused,
+  so a batch never creates duplicates.
   Remove: deletes the per-clip theme, library
   copies and the cycle-list entry. If the clip
   is the playing one, another video takes over
@@ -821,7 +1038,8 @@ main() {
         --preview "preview_cmd {}" \
         --preview-window "right:33%,border-rounded" \
         --bind "a:execute-silent(echo ADD > $SESSION/action)+abort" \
-        --bind "r:execute-silent(echo REMOVE > $SESSION/action)+abort" \
+        --bind "r:execute-silent(printf '%s\\n' {} > $SESSION/rline)+abort" \
+        --bind "e:execute-silent(printf '%s\\n' {} > $SESSION/eline)+abort" \
         --bind "h:execute-silent(echo HELP > $SESSION/action)+abort" \
         --bind "?:execute-silent(echo HELP > $SESSION/action)+abort" \
         --bind "q:abort,esc:abort" \
@@ -830,13 +1048,44 @@ main() {
 
     action=$(cat "$SESSION/action" 2>/dev/null) || action=""
     rm -f "$SESSION/action"
+    rline=$(cat "$SESSION/rline" 2>/dev/null) || rline=""
+    rm -f "$SESSION/rline"
+    eline=$(cat "$SESSION/eline" 2>/dev/null) || eline=""
+    rm -f "$SESSION/eline"
 
-    # shortcut key (a/r/?) → abort with marker
+    # 'r' on the list → remove the HIGHLIGHTED clip directly (no picker).
+    # If the highlighted row is not a clip (an action row), fall back to the
+    # picker so 'r' still works as "remove a video".
+    if [[ -n $rline ]]; then
+      FEEDBACK=""
+      local rname; rname=$(line_to_name "$rline")
+      if [[ -n $rname ]] && grep -qP "^\Q${rname}\E\t" "$SESSION/library.tsv" 2>/dev/null; then
+        remove_one "$rname"
+      else
+        remove_picker
+      fi
+      continue
+    fi
+
+    # 'e' on the list → re-extract the HIGHLIGHTED clip's palette directly
+    # (no picker). If the highlighted row is not a clip (an action row), fall
+    # back to the palette picker so 'e' still works as "edit palette".
+    if [[ -n $eline ]]; then
+      FEEDBACK=""
+      local ename; ename=$(line_to_name "$eline")
+      if [[ -n $ename ]] && grep -qP "^\Q${ename}\E\t" "$SESSION/library.tsv" 2>/dev/null; then
+        edit_palette "$ename"
+      else
+        palette_picker
+      fi
+      continue
+    fi
+
+    # shortcut key (a/?) → abort with marker
     if [[ -n $action ]]; then
       FEEDBACK=""
       case $action in
         ADD) do_add ;;
-        REMOVE) remove_picker ;;
         HELP) show_help ;;
       esac
       continue
@@ -852,6 +1101,7 @@ main() {
     case $plain in
       *"Add a video"*) do_add ;;
       *"Remove a video"*) remove_picker ;;
+      *"Edit palette"*) palette_picker ;;
       *"How to use"*) show_help ;;
       "==="*) : ;;   # section divider selected → ignore
       *)
