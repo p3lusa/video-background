@@ -30,7 +30,16 @@ for arg in "$@"; do
   esac
 done
 
-PLUGIN_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Bindings always point at the INSTALLED plugin — the live copy managed by
+# omarchy — never at a development checkout. This script is also run from
+# the git repo (video-theme.sh, video-cycle.sh, video-switcher.sh invoke it
+# as $(dirname $0)/video-bindings.sh), so a self-relative path would silently
+# point the keybindings at whatever tree was invoked. Develop in the repo,
+# deploy to the installed plugin, and the keybindings always run the
+# installed copy. Fall back to our own directory only when no install
+# exists yet (e.g. first run before the plugin is in place).
+PLUGIN_BIN="$HOME/.config/omarchy/plugins/io.github.p3lu.video-background/bin"
+[[ -d $PLUGIN_BIN ]] || PLUGIN_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BINDINGS_FILE="$HOME/.config/hypr/bindings.lua"
 BEGIN_MARK="-- >>> io.github.p3lu.video-background >>>"
 END_MARK="-- <<< io.github.p3lu.video-background <<<"
