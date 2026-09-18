@@ -219,7 +219,7 @@ detect_img_proto() {
 # $SESSION/poster-<base>-<w>.img and regenerated only when the poster or the
 # target width changes.
 render_poster() { # <name>
-  local name=$1 p cache w cols c
+  local name=$1 p cache w cols c iw ih rows i
   p=$(poster_for "$name")
   # The preview pane must always show *this* clip's image. kitty keeps image
   # placements alive across preview redraws, so if this clip has no poster
@@ -229,30 +229,39 @@ render_poster() { # <name>
   [[ -z $p || -z $IMG_PROTO || $IMG_PROTO == none ]] && return 0
   # Dynamic target: the preview pane is fzf's right 33%. Recomputed on every
   # render (fzf re-runs the preview on focus/resize/redraw) so the poster
-  # follows the terminal size. `c` is the pane width in COLUMNS (the kitty
-  # placement key that scales the image); `w` is the source pixel width we
-  # ask ffmpeg for (~8 px per monospace cell, clamped to sane bounds).
+  # follows the terminal size. `c` is the pane width in COLUMNS; `w` is the
+  # source pixel width we ask ffmpeg for (~8 px per monospace cell).
   cols=$(tput cols 2>/dev/null) || cols=80
   (( cols < 40 )) && cols=40
   c=$(( cols / 3 - 2 )); (( c < 12 )) && c=12   # minus the preview border
   w=$(( c * 8 )); (( w > 720 )) && w=720
+  # Rows the image occupies when displayed `c` columns wide, from the poster's
+  # own aspect ratio (ih/iw). Drives both the kitty placement box (a=p,c,r)
+  # and the newline padding, so the text card always starts exactly below the
+  # image — no pixel/cell conversion needed.
+  rows=0
+  # ffprobe csv is "W,H" — split on the comma (read's default IFS is
+  # whitespace, which would leave ih empty).
+  IFS=',' read -r iw ih < <(ffprobe -v error -select_streams v:0 \
+      -show_entries stream=width,height -of csv=p=0 "$p" 2>/dev/null) || true
+  iw=${iw:-0}; ih=${ih:-0}
+  if (( iw > 0 && ih > 0 )); then
+    rows=$(( (c * ih + iw / 2) / iw )); (( rows < 1 )) && rows=1
+  fi
   # basename removes the directory; strip any image extension to get a clean
-  # cache key. The simple, robust way: remove everything from the first dot.
+  # cache key (remove everything from the first dot).
   cache="$SESSION/poster-$(basename "$p" | sed 's/\.[^.]*$//')-$w.img"
   if [[ ! -f $cache || $p -nt $cache ]]; then
     local out=""
     case $IMG_PROTO in
       kitty)
-        # downscale with ffmpeg (always present) -> PNG -> kitty sequence.
-        #
-        # The spec (sw.kovidgoyal.net/kitty/graphics-protocol) requires the
-        # payload to be sent in chunks: `base64 -w 4096` -> one APC per line,
-        # `m=1` for every chunk and a final `m=0`. The old code sent the whole
-        # base64 string in a single APC with `w=<px>` — but in a *transmit*
-        # `w` is the source rectangle, not the display size, and a single
-        # multi-megabyte APC is dropped by kitty, which is exactly why the
-        # poster "failed some of the time". Scaling to the pane is a separate
-        # *placement* (`a=p,c=<cols>`), emitted after the final chunk.
+        # downscale with ffmpeg (always present) -> PNG -> chunked kitty
+        # transmit. The spec (sw.kovidgoyal.net/kitty/graphics-protocol)
+        # requires the base64 payload in frames (`m=1` per chunk, `m=0` on the
+        # last, each chunk <= 4 KB) because a single multi-megabyte APC is
+        # dropped by kitty intermittently. We cache only the TRANSMIT (image
+        # bytes); the display placement + row padding are emitted fresh below
+        # so they always match the current pane size.
         local tmp="$SESSION/thumb.png"
         if ffmpeg -v error -y -i "$p" -vf "scale=${w}:-2" "$tmp" 2>/dev/null; then
           local first=1 chunk
@@ -269,7 +278,6 @@ render_poster() { # <name>
             else
               printf '\033_Gm=0;\033\\'              # final (empty) chunk
             fi
-            printf '\033_Ga=p,c=%s\033\\' "$c"      # scale to the pane width
           } > "$cache"
           out="$cache"
         fi
@@ -285,10 +293,20 @@ render_poster() { # <name>
     esac
     [[ -z $out ]] && return 0
   fi
-  # Drop one line so the text card below doesn't overlap the image (kitty
-  # moves the cursor after the placement, per spec).
+  # Emit the image, then (kitty) the display placement, then enough newlines
+  # to push the text card below the picture. fzf's preview pane does not
+  # reserve rows for a kitty image, so without this padding the metadata card
+  # renders on top of it. sixel advances the cursor on its own — keep the
+  # original single newline there.
   cat "$cache"
-  printf '\n'
+  if [[ $IMG_PROTO == kitty ]]; then
+    if (( rows > 0 )); then
+      printf '\033_Ga=p,c=%s,r=%s\033\\' "$c" "$rows"
+      for ((i=0;i<rows;i++)); do printf '\n'; done
+    fi
+  else
+    printf '\n'
+  fi
 }
 export -f render_poster
 
@@ -636,8 +654,12 @@ do_add() {
   local strip=""
   if ffprobe -v error -select_streams a -show_entries stream=codec_type \
        "$f" 2>/dev/null | grep -q audio; then
-    if gum confirm --title "The clip has an audio track" \
-         --description "'$name' carries audio; the plugin would play it. Drop the audio track (lossless remux)?" \
+    # gum 2.x confirm takes the prompt as a POSITIONAL arg (no --title /
+    # --description flags — they exist in gum 1.x only and abort on 2.x).
+    if gum confirm \
+         "Drop the audio track?
+'$name' carries audio; the plugin has no volume control and would play it.
+Drop the track now (lossless remux)?" \
          --affirmative "Drop audio" --negative "Cancel"; then
       strip="--strip-audio"
     else
@@ -656,8 +678,11 @@ do_add() {
 
 do_remove() { # <name>
   local name=$1
-  gum confirm --title "Remove $name?" \
-    --description "Deletes its per-clip theme, library copies and cycle entry. Your original clip file is untouched." \
+  # gum 2.x confirm takes the prompt as a POSITIONAL arg (no --title /
+  # --description flags — they exist in gum 1.x only and abort on 2.x).
+  gum confirm \
+    "Remove '$name'?
+Deletes its per-clip theme, library copies and cycle entry. Your original clip file is untouched." \
     --affirmative "Remove" --negative "Cancel" || return 0
   if gum spin --spinner dot --title "removing $name" \
        --show-output -- "$PLUGIN_BIN/video-remove.sh" "$name" 2>&1; then
