@@ -532,6 +532,10 @@ video_browser() { # <start-dir>
   while true; do
     rm -f "$SESSION/bract"
     printf '%s' "$dir" > "$SESSION/brdir"   # for the preview pane
+    # NB: no `+redraw` on the ctrl-r bind — fzf 0.74.x has no `redraw` action
+    # and dies with "unknown action: redraw", killing the whole browser (the
+    # error went to silenced stderr, so `a` just looked like a no-op).
+    # `+abort` is enough: the REFRESH branch below re-lists the same directory.
     pick=$(browser_list "$dir" | fzf \
         --height "60%" --border \
         --border-label " add video · $(basename -- "$dir") " --border-label-pos 3 \
@@ -541,7 +545,7 @@ video_browser() { # <start-dir>
         --preview 'browser_preview {}' \
         --preview-window "right:35%,border-rounded" \
         --bind "ctrl-u:execute-silent(echo UP > $SESSION/bract)+abort" \
-        --bind "ctrl-r:execute-silent(echo REFRESH > $SESSION/bract)+abort+redraw" \
+        --bind "ctrl-r:execute-silent(echo REFRESH > $SESSION/bract)+abort" \
         --bind "q:abort,esc:abort" \
         --color "$(fzf_colors)" \
         2>/dev/null) || pick=""
@@ -674,6 +678,8 @@ Drop the track now (lossless remux)?" \
   else
     FEEDBACK="add failed: $name"
   fi
+  drain_tty   # swallow any key typed while the spinner was up (else it leaks
+              # into the next fzf — e.g. 'h' opens help right after an add)
 }
 
 do_remove() { # <name>
@@ -690,6 +696,8 @@ Deletes its per-clip theme, library copies and cycle entry. Your original clip f
   else
     FEEDBACK="remove failed: $name"
   fi
+  drain_tty   # swallow any key typed while the spinner was up (else it leaks
+              # into the next fzf — e.g. 'h' opens help right after a removal)
 }
 
 # Picker used both by the "Remove a video" entry and the 'r' key: lists only
@@ -761,6 +769,24 @@ EOF
   } <"$tty_dev" >"$tty_dev" 2>&1
 }
 
+# drain_tty — swallow keystrokes left in the tty input queue by an
+# external UI (gum confirm / gum spin) that was just running. In cooked
+# mode un-entered single keys are invisible to `read -t 0`, so drop to
+# cbreak, drain, restore. Without this, an 'h' pressed while the remove
+# spinner ran leaks into the next fzf and opens the help screen right
+# after the removal.
+drain_tty() {
+  local tty_dev saved _c
+  tty_dev=$(tty 2>/dev/null) || tty_dev="/dev/tty"
+  [[ -r $tty_dev && -w $tty_dev ]] || return 0
+  saved=$(stty -g <"$tty_dev" 2>/dev/null) || return 0
+  stty cbreak -echo <"$tty_dev" 2>/dev/null || return 0
+  while IFS= read -t 0.1 -s -n 1 _c <"$tty_dev"; do :; done
+  stty "$saved" <"$tty_dev" 2>/dev/null
+  return 0
+}
+export -f drain_tty
+
 # ------------------------------------------------------------------- main ----
 fzf_colors() {
   printf 'fg:#%s,bg:#%s,fg+:#%s,header:#%s,info:#%s,query:#%s,pointer:#%s,marker:#%s,prompt:#%s,border:#%s' \
@@ -771,6 +797,8 @@ main() {
   local FEEDBACK="" out rc action n
   detect_img_proto
   while true; do
+    drain_tty    # swallow keys typed during gum confirm/spin (else they leak
+                 # into this fzf — e.g. 'h' opens help right after a removal)
     load_palette
     declare_icons
     scan_library
