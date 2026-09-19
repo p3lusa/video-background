@@ -591,7 +591,8 @@ export -f collect_videos
 # video_browser <start-dir> — secure, MULTI-select directory browser (fzf).
 # Replaces `gum file` (no filtering/scrolling). Lists sub-directories (with a
 # trailing '/') and video files only, at the current level. Keys:
-#   space     toggle selection of one entry (pick several, Enter to add them all)
+#   Enter     on a folder → open it (descend) · on file(s) → add them
+#   space     toggle selection of one entry (pick several, then Enter)
 #   ctrl-a    select ALL entries at this level (directories are dropped on submit)
 #   ctrl-b    BULK: add every video file in this directory (one keystroke)
 #   ctrl-d    descend into the highlighted directory
@@ -603,22 +604,32 @@ export -f collect_videos
 # resolved video paths (one per line) to $SESSION/picked (non-empty) and
 # returns 0; on cancel it leaves $SESSION/picked empty and returns 1.
 video_browser() { # <start-dir>
-  local dir=$1 pick act dline line r
+  local dir=$1 pick act dline line r hi
   dir_is_safe "$dir" || { REJECT_REASON="starting directory is not allowed"; return 1; }
   : > "$SESSION/picked"
   while true; do
-    rm -f "$SESSION/bract"
+    rm -f "$SESSION/bract" "$SESSION/hi"
     printf '%s' "$dir" > "$SESSION/brdir"   # for the preview pane
-    # NB: no `+redraw` on the ctrl-r bind — fzf 0.74.x has no `redraw` action
-    # and dies with "unknown action: redraw", killing the whole browser.
-    # `+abort` is enough: the branch below re-lists / acts on the same directory.
+    #
+    # ENTER IS REBOUND (this is the fix for "add returns to the menu"):
+    # native `fzf --multi` treats Enter as *confirm* — and with nothing
+    # space-selected it ABORTS, so pressing Enter on a folder dropped the user
+    # straight back at the main menu with nothing added. We instead capture the
+    # HIGHLIGHTED item ({}) to $SESSION/hi and let `accept` emit the
+    # space-selection (multi) to stdout. The loop below then decides
+    # deterministically:
+    #   • stdout non-empty  → multi-select confirmed → add those files
+    #   • hi is a directory → open it (descend)        ← the case that broke
+    #   • hi is a file      → add that single file
+    #   • neither (Esc/q)   → cancel
+    #
     pick=$(browser_list "$dir" | fzf \
         --multi \
         --height "60%" --border \
         --border-label " add video(s) · $(basename -- "$dir") " --border-label-pos 3 \
         --prompt "filter: " \
         --ansi \
-        --header "space pick · ctrl-a all · ctrl-b bulk dir · ctrl-d enter dir · ctrl-u up · ctrl-r refresh · q cancel" \
+        --header "Enter open/add · space multi-pick · ctrl-b bulk dir · ctrl-d enter · ctrl-u up · q cancel" \
         --preview 'browser_preview {}' \
         --preview-window "right:35%,border-rounded" \
         --bind "ctrl-a:select-all" \
@@ -626,12 +637,16 @@ video_browser() { # <start-dir>
         --bind "ctrl-d:execute-silent(printf 'DESCEND %s\n' {} > $SESSION/bract)+abort" \
         --bind "ctrl-u:execute-silent(echo UP > $SESSION/bract)+abort" \
         --bind "ctrl-r:execute-silent(echo REFRESH > $SESSION/bract)+abort" \
+        --bind "enter:execute-silent(printf '%s' '{}' > $SESSION/hi)+accept" \
         --bind "q:abort,esc:abort" \
         --color "$(fzf_colors)" \
         2>/dev/null) || pick=""
     act=$(cat "$SESSION/bract" 2>/dev/null) || act=""
     rm -f "$SESSION/bract"
+    hi=$(cat "$SESSION/hi" 2>/dev/null) || hi=""
+    rm -f "$SESSION/hi"
 
+    # ctrl-* actions take priority (they abort before the enter rebind runs).
     if [[ -n $act ]]; then
       case $act in
         BULK)
@@ -643,8 +658,7 @@ video_browser() { # <start-dir>
         DESCEND*)
           dline="${act#DESCEND }"
           if [[ $dline == */ ]] && dir_is_safe "$dir/${dline%/}"; then
-            dir="$dir/${dline%/}"
-            continue
+            dir="$dir/${dline%/}"; continue
           elif [[ $dline == */ ]]; then
             REJECT_REASON="directory not allowed: $dline"
             return 1
@@ -658,19 +672,36 @@ video_browser() { # <start-dir>
       esac
     fi
 
-    if [[ -z $pick ]]; then
-      return 1   # Esc/q (or Enter with no selection) → cancel
+    # ENTER decision (see the rebind above).
+    if [[ -z $pick && -z $hi ]]; then
+      return 1   # Esc/q → cancel
     fi
-    # Enter with a multi-selection: keep only validated video files (a
-    # selected directory is dropped — it is not a clip).
-    : > "$SESSION/picked"
-    while IFS= read -r line; do
-      [[ -z $line ]] && continue
-      [[ $line == */ ]] && continue
-      r=$(validate_video_path "$dir/$line" 2>/dev/null) || continue
-      printf '%s\n' "$r" >> "$SESSION/picked"
-    done <<< "$pick"
-    [[ -s $SESSION/picked ]] && return 0 || return 1
+    if [[ -n $pick ]]; then
+      # Multi-select confirmed (space-picks): keep only validated video files.
+      : > "$SESSION/picked"
+      while IFS= read -r line; do
+        [[ -z $line ]] && continue
+        [[ $line == */ ]] && continue
+        r=$(validate_video_path "$dir/$line" 2>/dev/null) || continue
+        printf '%s\n' "$r" >> "$SESSION/picked"
+      done <<< "$pick"
+      [[ -s $SESSION/picked ]] && return 0 || return 1
+    fi
+    # Single highlighted item, no space-selection.
+    case $hi in
+      */)
+        if dir_is_safe "$dir/${hi%/}"; then
+          dir="$dir/${hi%/}"; continue   # open the folder
+        else
+          REJECT_REASON="directory not allowed: $hi"; return 1
+        fi ;;
+      "")
+        return 1 ;;   # safety: nothing to act on
+      *)
+        r=$(validate_video_path "$dir/$hi" 2>/dev/null) || return 1
+        printf '%s\n' "$r" > "$SESSION/picked"
+        return 0 ;;
+    esac
   done
 }
 export -f video_browser
