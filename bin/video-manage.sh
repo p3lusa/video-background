@@ -247,16 +247,25 @@ render_poster() { # <name>
   # follows the terminal size. `c` = box width in COLUMNS (kitty `a=p,c=,r=`
   # are both in cells; the image is scaled to fit that cell box); `w` = the
   # source pixel width we ask ffmpeg for (~8 px per monospace cell).
+  #
+  # IMPORTANT: inside the fzf preview, `tput cols`/`tput lines` — and the
+  # COLUMNS/LINES fzf exports to the preview subprocess — report the PREVIEW
+  # PANE size, NOT the full terminal. fzf has already sized them to
+  # `right:33%`. So we must NOT divide by 3 again: that double-division pinned
+  # `c` to the 12-column minimum and rendered the poster as a fixed ~96px
+  # thumbnail no matter how large the terminal window got (the "it doesn't
+  # auto-adjust to the window" bug). Use the pane width directly.
   cols=$(tput cols 2>/dev/null) || cols=80
-  (( cols < 40 )) && cols=40
+  (( cols < 20 )) && cols=20
   rows_total=$(tput lines 2>/dev/null) || rows_total=24
   (( rows_total < 12 )) && rows_total=24
-  c=$(( cols / 3 - 2 )); (( c < 12 )) && c=12   # minus the preview border
-  # Usable height in rows: the fzf body is ~90% of the terminal and the
-  # header/footer eat a few rows, so ~60% of the rows is a safe cap. This is
-  # the HEIGHT bound (P4: it previously only capped width, so a wide/short
-  # clip could push the text card off the pane).
-  maxrows=$(( rows_total * 6 / 10 )); (( maxrows < 10 )) && maxrows=10
+  # Usable box width = preview pane minus the rounded border (1 cell each side).
+  c=$(( cols - 2 )); (( c < 12 )) && c=12
+  # Reserve rows for the text card printed below the poster (name/rule/theme/
+  # kind/status/media/hint ≈ 9 rows in preview_cmd) so the image never overlaps
+  # it. The image gets the rest of the pane height — this is the HEIGHT bound.
+  local cardrows=9
+  maxrows=$(( rows_total - cardrows )); (( maxrows < 8 )) && maxrows=8
   # ffprobe csv is "W,H" — split on the comma (read's default IFS is
   # whitespace, which would leave ih empty).
   IFS=',' read -r iw ih < <(ffprobe -v error -select_streams v:0 \
