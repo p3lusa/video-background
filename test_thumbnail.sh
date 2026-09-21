@@ -88,7 +88,7 @@ fi
 #    recover the bare payload.
 clean=$(printf '%s' "$out" | tr -d '\033' | tr -d '\\\\' | tr -d '\n')
 payload=$(printf '%s' "$clean" \
-  | sed -E 's/^_Ga=d//; s/^_Ga=T,f=100,m=1;//; s/_Gm=1;//g; s/_Gm=0;_Ga=p,c=[0-9]+$//')
+  | sed -E 's/^_Ga=d//; s/^_Ga=T,f=100,m=1;//; s/_Gm=1;//g; s/_Gm=0;_Ga=p,c=[0-9]+(,r=[0-9]+)?$//')
 thumb="$SESSION/thumb.png"
 if [[ -s $thumb ]] && file "$thumb" 2>/dev/null | grep -qi 'PNG image'; then
   ok "intermediate thumb.png is a valid PNG"
