@@ -269,9 +269,14 @@ render_poster() { # <name>
   if (( iw > 0 && ih > 0 )); then
     rows=$(( (c * ih + iw / 2) / iw )); (( rows < 1 )) && rows=1
     # Fit the height: if the full-pane width would exceed maxrows, shrink the
-    # box width in COLUMNS (preserving aspect) so rows <= maxrows.
+    # box so the image fills exactly maxrows rows (preserving aspect). The box
+    # width in COLUMNS that yields a height of maxrows is maxrows * iw/ih —
+    # note it scales with the SOURCE aspect ratio (iw/ih), NOT with the pane
+    # width. (An earlier version used `c * maxrows / ih`, which for a wide
+    # source (iw >> c) collapsed boxc to the 8-col minimum, so the poster was
+    # a tiny ~64px thumbnail even on a fullscreen terminal.)
     if (( rows > maxrows )); then
-      boxc=$(( (c * maxrows + ih / 2) / ih )); (( boxc < 8 )) && boxc=8
+      boxc=$(( (maxrows * iw + ih / 2) / ih )); (( boxc < 8 )) && boxc=8
       rows=$(( (boxc * ih + iw / 2) / iw )); (( rows < 1 )) && rows=1
       (( rows > maxrows )) && rows=$maxrows
     fi
