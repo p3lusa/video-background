@@ -673,21 +673,27 @@ video_browser() { # <start-dir>
     fi
 
     # ENTER decision (see the rebind above).
+    # fzf >= 0.48: with --multi, Enter with NOTHING space-selected still
+    # confirms the HIGHLIGHTED item, so `pick` is the highlighted line (never
+    # empty on Enter) — it is NOT a reliable "is this a multi-select" signal.
+    # Resolve intent deterministically instead:
+    #   • any validated video file in the selection → add those file(s)
+    #   • else, the highlighted item is a directory  → descend into it
+    #   • else (Esc/q, or nothing actionable)         → cancel
     if [[ -z $pick && -z $hi ]]; then
       return 1   # Esc/q → cancel
     fi
-    if [[ -n $pick ]]; then
-      # Multi-select confirmed (space-picks): keep only validated video files.
-      : > "$SESSION/picked"
-      while IFS= read -r line; do
-        [[ -z $line ]] && continue
-        [[ $line == */ ]] && continue
-        r=$(validate_video_path "$dir/$line" 2>/dev/null) || continue
-        printf '%s\n' "$r" >> "$SESSION/picked"
-      done <<< "$pick"
-      [[ -s $SESSION/picked ]] && return 0 || return 1
+    : > "$SESSION/picked"
+    while IFS= read -r line; do
+      [[ -z $line ]] && continue
+      [[ $line == */ ]] && continue
+      r=$(validate_video_path "$dir/$line" 2>/dev/null) || continue
+      printf '%s\n' "$r" >> "$SESSION/picked"
+    done <<< "$pick"
+    if [[ -s $SESSION/picked ]]; then
+      return 0   # one or more video files selected → add them
     fi
-    # Single highlighted item, no space-selection.
+    # No video file in the selection: descend if the highlighted item is a dir.
     case $hi in
       */)
         if dir_is_safe "$dir/${hi%/}"; then
@@ -695,12 +701,8 @@ video_browser() { # <start-dir>
         else
           REJECT_REASON="directory not allowed: $hi"; return 1
         fi ;;
-      "")
-        return 1 ;;   # safety: nothing to act on
       *)
-        r=$(validate_video_path "$dir/$hi" 2>/dev/null) || return 1
-        printf '%s\n' "$r" > "$SESSION/picked"
-        return 0 ;;
+        return 1 ;;   # nothing actionable
     esac
   done
 }
