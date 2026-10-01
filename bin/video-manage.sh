@@ -637,6 +637,12 @@ video_browser() { # <start-dir>
     #   • hi is a file      → add that single file
     #   • neither (Esc/q)   → cancel
     #
+    # NOTE on the `enter` rebind below: fzf replaces {} with the single-QUOTED
+    # highlighted line (fzf README, "Key bindings"), so the placeholder must be
+    # used directly. The old form printf '%s' '{}' added a literal quote pair
+    # around fzf's own quoting ({} -> ''<line>''), which cancels it and
+    # re-exposes the line: a valid filename containing $(...) would run as a
+    # command substitution BEFORE validate_video_path() ever sees it.
     pick=$(browser_list "$dir" | fzf \
         --multi \
         --height "60%" --border \
@@ -651,7 +657,7 @@ video_browser() { # <start-dir>
         --bind "ctrl-d:execute-silent(printf 'DESCEND %s\n' {} > $SESSION/bract)+abort" \
         --bind "ctrl-u:execute-silent(echo UP > $SESSION/bract)+abort" \
         --bind "ctrl-r:execute-silent(echo REFRESH > $SESSION/bract)+abort" \
-        --bind "enter:execute-silent(printf '%s' '{}' > $SESSION/hi)+accept" \
+        --bind "enter:execute-silent(printf '%s' {} > $SESSION/hi)+accept" \
         --bind "q:abort,esc:abort" \
         --color "$(fzf_colors)" \
         2>/dev/null) || pick=""
