@@ -774,11 +774,11 @@ do_play() { # <name>
   # plugin derives the playing clip from the background's base name and keeps
   # the image underneath as the image-fallback. Pointing the background at the
   # .mp4 broke both (a freshly-added clip then stayed a static frame until the
-  # theme was changed elsewhere). Poster: <theme>/backgrounds/<name>.png, where
-  # <theme> is the directory that holds the video file.
-  tdir=$(dirname "$(dirname "$file")")
-  poster="$tdir/backgrounds/$name.png"
-  [[ -f $poster ]] || poster="$file"   # legacy fallback if no paired poster
+  # theme was changed elsewhere). Poster: <theme>/backgrounds/<name>.<ext>,
+  # where <theme> is the directory that holds the video file and the poster
+  # extension is whatever the theme ships (png, webp, ...).
+  poster="$(poster_for "$name")"
+  [[ -n $poster ]] || poster="$file"   # legacy fallback if no paired poster
   if [[ $theme == "$CUR_THEME" ]]; then
     omarchy theme bg set "$poster"
   else

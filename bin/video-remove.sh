@@ -121,7 +121,8 @@ if $has_perclip; then
 fi
 for t in "${!lib_copies[@]}"; do
   subdir="${lib_copies[$t]}"
-  rm -f "$t/$subdir/$name.mp4" "$t/backgrounds/$name.png"
+  rm -f "$t/$subdir/$name.mp4"
+  rm -f "$t/backgrounds/$name".{png,jpg,jpeg,webp,gif,bmp}
   echo "removed library copy in $t."
 done
 

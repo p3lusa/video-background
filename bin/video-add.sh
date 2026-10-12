@@ -98,7 +98,12 @@ lib="$USER_THEMES/$LIBRARY_THEME"
 if [[ -d $lib ]]; then
   mkdir -p "$lib/videos" "$lib/backgrounds"
   ln -f "$USER_THEMES/video-$name/videos/$name.mp4" "$lib/videos/$name.mp4"
-  ln -f "$USER_THEMES/video-$name/backgrounds/$name.png" "$lib/backgrounds/$name.png"
+  # Mirror the poster under whatever extension video-theme.sh produced
+  # (png today; the theme repo ships webp for compressed posters).
+  src_poster="$(find "$USER_THEMES/video-$name/backgrounds" -maxdepth 1 -name "$name.*" -print -quit 2>/dev/null)"
+  if [[ -n $src_poster ]]; then
+    ln -f "$src_poster" "$lib/backgrounds/$(basename "$src_poster")"
+  fi
   echo "mirrored into $LIBRARY_THEME (hardlinks)."
 else
   echo "note: library theme '$LIBRARY_THEME' not found; skipped the mirror."
