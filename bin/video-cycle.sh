@@ -66,7 +66,8 @@ for tdir in "$USER_THEMES"/*/; do
     clips+=("$(basename "$poster")")
   done
   if (( ${#clips[@]} > 0 )); then
-    theme_clips["$t"]="$(printf '%s\n' "${clips[@]}" | sort | tr '\n' ' ')"
+    # one clip per line — never space-join: clip names may contain spaces
+    theme_clips["$t"]="$(printf '%s\n' "${clips[@]}" | sort)"
   fi
 done
 
@@ -84,19 +85,21 @@ for tdir in "$USER_THEMES"/*/; do
   [[ -f "${tdir}.video-theme" ]] || continue
   t="${tdir%/}"; t="${t##*/}"
   marked["$t"]=1
-  for c in ${theme_clips[$t]:-}; do
-    claimed["${c%.*}"]=1
-  done
+  [[ -n ${theme_clips[$t]:-} ]] || continue
+  while IFS= read -r c; do
+    [[ -n $c ]] && claimed["${c%.*}"]=1
+  done <<<"${theme_clips[$t]}"
 done
 for t in "${!theme_clips[@]}"; do
   [[ -n ${marked[$t]:-} ]] && continue
   keep=()
-  for c in ${theme_clips[$t]}; do
+  while IFS= read -r c; do
+    [[ -n $c ]] || continue
     [[ -n ${claimed["${c%.*}"]:-} ]] && continue
     keep+=("$c")
-  done
+  done <<<"${theme_clips[$t]}"
   if (( ${#keep[@]} > 0 )); then
-    theme_clips["$t"]="$(printf '%s\n' "${keep[@]}" | sort | tr '\n' ' ')"
+    theme_clips["$t"]="$(printf '%s\n' "${keep[@]}" | sort)"
   else
     unset "theme_clips[$t]"
   fi
@@ -130,9 +133,9 @@ done < <(printf '%s\n' "${!theme_clips[@]}" | sort)
 # --- flat entry list: "theme<TAB>poster" ------------------------------------
 entries=()
 for t in "${ordered[@]}"; do
-  for c in ${theme_clips[$t]}; do
-    entries+=("$t"$'\t'"$c")
-  done
+  while IFS= read -r c; do
+    [[ -n $c ]] && entries+=("$t"$'\t'"$c")
+  done <<<"${theme_clips[$t]}"
 done
 n=${#entries[@]}
 

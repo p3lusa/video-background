@@ -23,7 +23,7 @@ if [[ $# -ne 1 || -z ${1:-} ]]; then
   exit 2
 fi
 name="$1"
-for ext in mp4 mkv webm mov avi; do name="${name%.$ext}"; done
+for ext in mp4 mkv webm mov avi; do name="${name%".$ext"}"; done
 name="${name#video-}"
 
 # --- clip lookup by extension -------------------------------------------------

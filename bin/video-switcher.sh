@@ -67,7 +67,8 @@ for tdir in "$USER_THEMES"/*/; do
     clips+=("$(basename "$poster")")
   done
   if (( ${#clips[@]} > 0 )); then
-    theme_clips["$t"]="${clips[*]}"
+    # one clip per line — never space-join: clip names may contain spaces
+    theme_clips["$t"]="$(printf '%s\n' "${clips[@]}" | sort)"
   fi
 done
 
@@ -81,19 +82,21 @@ for tdir in "$USER_THEMES"/*/; do
   [[ -f "${tdir}.video-theme" ]] || continue
   t="${tdir%/}"; t="${t##*/}"
   marked["$t"]=1
-  for c in ${theme_clips[$t]:-}; do
-    claimed["${c%.*}"]=1
-  done
+  [[ -n ${theme_clips[$t]:-} ]] || continue
+  while IFS= read -r c; do
+    [[ -n $c ]] && claimed["${c%.*}"]=1
+  done <<<"${theme_clips[$t]}"
 done
 for t in "${!theme_clips[@]}"; do
   [[ -n ${marked[$t]:-} ]] && continue
   keep=()
-  for c in ${theme_clips[$t]}; do
+  while IFS= read -r c; do
+    [[ -n $c ]] || continue
     [[ -n ${claimed["${c%.*}"]:-} ]] && continue
     keep+=("$c")
-  done
+  done <<<"${theme_clips[$t]}"
   if (( ${#keep[@]} > 0 )); then
-    theme_clips["$t"]="${keep[*]}"
+    theme_clips["$t"]="$(printf '%s\n' "${keep[@]}" | sort)"
   else
     unset "theme_clips[$t]"
   fi
@@ -123,7 +126,8 @@ mkdir -p "$CACHE_DIR"
 
 for t in "${ordered[@]}"; do
   tdir="$USER_THEMES/$t"
-  read -ra clips <<<"${theme_clips[$t]}"
+  clips=()
+  [[ -n ${theme_clips[$t]:-} ]] && mapfile -t clips <<<"${theme_clips[$t]}"
   for c in "${clips[@]}"; do
     if [[ $t == "$CURRENT_THEME" ]]; then
       entry="$c"

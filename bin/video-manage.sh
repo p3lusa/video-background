@@ -25,7 +25,6 @@ PLUGIN_BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 THEMES_USER="$HOME/.config/omarchy/themes"
 THEMES_SYS="${OMARCHY_PATH:-/usr/share/omarchy}/themes"
 STAGED_BG_LINK="$HOME/.local/state/omarchy/current/background"
-LIB_THEME="video-wallpaper"
 CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/video-manage"
 META_DIR="$CACHE_ROOT/meta"
 mkdir -p "$META_DIR"
@@ -959,7 +958,7 @@ edit_palette() { # <name>
         backgrounds|videos|.video-theme|.aether-managed) continue ;;
       esac
       if [[ -d $item ]]; then
-        rm -rf "$tdir/$base"; cp -r "$item" "$tdir/$base" 2>/dev/null || true
+        rm -rf "$tdir/${base:?}"; cp -r "$item" "$tdir/$base" 2>/dev/null || true
       else
         cp -f "$item" "$tdir/$base" 2>/dev/null || true
       fi

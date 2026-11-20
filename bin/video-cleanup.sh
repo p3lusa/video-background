@@ -42,7 +42,7 @@ for marker in "$USER_THEMES"/*/.video-theme; do
   fi
   t="${marker%/*}"; t="${t##*/}"
   if [[ -z ${keep[$t]:-} ]]; then
-    omarchy theme remove "$t" >/dev/null 2>&1 || rm -rf "$USER_THEMES/$t"
+    omarchy theme remove "$t" >/dev/null 2>&1 || { [[ -n $t && $t != . && $t != .. ]] && rm -rf "${USER_THEMES:?}/${t:?}"; }
   fi
 done
 
