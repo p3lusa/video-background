@@ -157,4 +157,8 @@ fi
 if [[ $entry_theme != "$CURRENT_THEME" ]]; then
   omarchy theme set "$entry_theme"
 fi
-omarchy theme bg set "$CURRENT_THEME_PATH/backgrounds/$entry_poster"
+# OWE backend: name the CLIP (mp4) so owed renders it; poster stays behind it
+# as the still partner. Fall back to the poster if the clip vanished mid-run.
+clip_video="$CURRENT_THEME_PATH/videos/${entry_poster%.*}.mp4"
+[[ -f $clip_video ]] || clip_video="$CURRENT_THEME_PATH/backgrounds/$entry_poster"
+omarchy theme bg set "$clip_video"

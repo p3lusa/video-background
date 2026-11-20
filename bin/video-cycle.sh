@@ -157,15 +157,23 @@ if [[ $t != "$CURRENT_THEME" ]]; then
   fi
 fi
 
-# Only touch the background when it is not already the playing one.
+# Point the background at the CLIP itself (the mp4). With the OWE backend the
+# wallpaper daemon renders whatever the symlink names; the paired poster stays
+# in backgrounds/ as its still partner (picker thumbnail, lock, battery poster).
+# Only touch the background when it is not already the playing clip.
+clip_video="$HOME/.local/state/omarchy/current/theme/videos/$clip_base.mp4"
+if [[ ! -f $clip_video ]]; then
+  # Defensive: the scan above guarantees a paired clip; fall back to poster.
+  clip_video="$HOME/.local/state/omarchy/current/theme/backgrounds/$c"
+fi
 staged_bg="$(readlink -f "$HOME/.local/state/omarchy/current/background" 2>/dev/null || true)"
 staged_base=""
 if [[ -n $staged_bg ]]; then
   staged_base="${staged_bg##*/}"
   staged_base="${staged_base%.*}"
 fi
-if [[ $staged_base != "$clip_base" ]]; then
-  omarchy theme bg set "$HOME/.local/state/omarchy/current/theme/backgrounds/$c" >/dev/null 2>&1
+if [[ $staged_base != "$clip_base" || "${staged_bg##*.}" != "mp4" ]]; then
+  omarchy theme bg set "$clip_video" >/dev/null 2>&1
 fi
 
 echo "video: $t / $clip_base"

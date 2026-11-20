@@ -770,20 +770,19 @@ do_play() { # <name>
   row=$(grep -P "^\Q${name}\E\t" "$SESSION/library.tsv" 2>/dev/null | head -1) || true
   [[ -z $row ]] && return 1
   IFS=$'\t' read -r _ theme file _ <<<"$row"
-  # The background must be the clip's POSTER (image), not the video: the
-  # plugin derives the playing clip from the background's base name and keeps
-  # the image underneath as the image-fallback. Pointing the background at the
-  # .mp4 broke both (a freshly-added clip then stayed a static frame until the
-  # theme was changed elsewhere). Poster: <theme>/backgrounds/<name>.<ext>,
-  # where <theme> is the directory that holds the video file and the poster
-  # extension is whatever the theme ships (png, webp, ...).
-  poster="$(poster_for "$name")"
-  [[ -n $poster ]] || poster="$file"   # legacy fallback if no paired poster
+  # OWE backend: the background symlink names the CLIP (mp4) and owed renders
+  # it natively. The poster in backgrounds/ is its still partner (thumbnail,
+  # lock screen, battery poster) — it no longer gates playback, so pointing at
+  # the .mp4 is the correct move (that was only broken under the old QML engine).
+  if [[ ! -f $file ]]; then
+    FEEDBACK="missing clip: $name"
+    return 1
+  fi
   if [[ $theme == "$CUR_THEME" ]]; then
-    omarchy theme bg set "$poster"
+    omarchy theme bg set "$file"
   else
     omarchy theme set "$theme"
-    omarchy theme bg set "$poster"
+    omarchy theme bg set "$file"
   fi
   FEEDBACK="playing $name · $theme"
 }

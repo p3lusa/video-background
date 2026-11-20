@@ -144,6 +144,9 @@ else
     echo "error: omarchy theme set $name failed" >&2
     exit 1
   fi
+  # Name the clip itself in the background symlink (OWE renders the mp4;
+  # the poster in backgrounds/ stays as its still partner).
+  omarchy theme bg set "$theme_src/videos/$(basename "$clip")" >/dev/null 2>&1 || true
 fi
 
 # --- 5. register in the video-theme cycle ----------------------------------------

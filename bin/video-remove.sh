@@ -138,6 +138,10 @@ if [[ -z $staged_bg || ! -f $staged_bg ]]; then
   staged_theme="$HOME/.local/state/omarchy/current/theme"
   first_bg="$(find "$staged_theme/backgrounds" -type f 2>/dev/null | sort | head -1)"
   if [[ -n $first_bg ]]; then
+    # Prefer the poster's paired clip: the OWE backend renders the mp4 named
+    # by the symlink; the poster only heals when no clip pairs it.
+    fb_base="${first_bg##*/}"; fb_base="${fb_base%.*}"
+    [[ -f "$staged_theme/videos/$fb_base.mp4" ]] && first_bg="$staged_theme/videos/$fb_base.mp4"
     omarchy theme bg set "$first_bg" >/dev/null 2>&1 || true
   else
     # the active theme has no backgrounds left: switch to one that does
