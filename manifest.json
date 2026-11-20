@@ -1,21 +1,20 @@
 {
   "schemaVersion": 1,
   "id": "io.github.p3lu.video-background",
-  "name": "Video Wallpaper",
-  "version": "0.7.1",
+  "name": "Video Wallpaper Manager",
+  "version": "0.8.0",
   "author": "p3lusa",
   "license": "MIT",
   "homepage": "https://github.com/p3lusa/video-background",
-  "description": "Desktop wallpaper renderer. Plays the active theme's looping video when it ships a videos/ directory, and otherwise behaves like the stock image background. Videos pause while locked or idle, and the active clip survives shell restarts. Pairs with the companion video-wallpaper theme (p3lusa/video-wallpaper) which ships the clip library and neon skin — the theme alone only shows static images.",
+  "description": "Video-wallpaper manager for Omarchy, built on the OWE wallpaper engine (owed): every clip is paired with its own theme, so video, palette, and wallpaper always change together. Full library TUI (browse, preview, add, remove, re-extract palette), instant prev/next cycle hotkeys, and per-clip themes that are created and reaped automatically. Rendering, hardware decode (VAAPI), pause policies (lock/idle/fullscreen/DPMS/battery), and GIF handling come from owe — install it with 'omarchy pkg add owe'. Pairs with the companion video-wallpaper theme (p3lusa/video-wallpaper), which ships the clip library; the theme alone only shows static images.",
   "keywords": [
     "video",
     "wallpaper",
-    "background"
+    "background",
+    "owe"
   ],
-  "kinds": [
-    "service"
-  ],
-  "entryPoints": {
-    "service": "Background.qml"
+  "owe": {
+    "package": "owe",
+    "minimumVersion": "0.2.14"
   }
 }

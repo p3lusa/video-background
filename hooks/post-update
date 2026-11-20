@@ -1,39 +1,17 @@
 #!/bin/bash
-# Re-assert the video-wallpaper plugin state after `omarchy update`.
+# Re-assert the plugin's conveniences after `omarchy update`.
 #
-# Two concerns, both idempotent and "never fight a deliberate change":
-#   1. While the video-wallpaper theme is the active one, keep
-#      io.github.p3lu.video-background enabled and omarchy.background disabled.
-#   2. (Re)apply GPU video-decode acceleration for whatever GPU this machine
-#      has, so the wallpaper decodes on the GPU, not the CPU.
-# No-op (for the parts that don't apply) when the theme/plugin is absent.
+# v0.8: rendering is delegated to owe (a system daemon), so this hook no
+# longer swaps background services or applies a Qt hwaccel drop-in. It only
+# (re)deploys the self-contained video keybindings block and keeps the theme
+# menu tidy. Both are idempotent and silent when already in place.
 
 set -euo pipefail
 
-THEME_DIR="$HOME/.config/omarchy/themes/video-wallpaper"
 PLUGIN_DIR="$HOME/.config/omarchy/plugins/io.github.p3lu.video-background"
-SHELL_JSON="$HOME/.config/omarchy/shell.json"
-THEME_NAME_FILE="$HOME/.local/state/omarchy/current/theme.name"
 
-[[ -d $PLUGIN_DIR && -f $SHELL_JSON ]] || exit 0
-
-video_on=$(jq -r '[.plugins[]?.id // empty] | index("io.github.p3lu.video-background")' "$SHELL_JSON" 2>/dev/null || echo null)
-
-# 1) Re-assert enable/disable state while the video-wallpaper theme is active.
-if [[ -d $THEME_DIR && "$(cat "$THEME_NAME_FILE" 2>/dev/null || true)" == "video-wallpaper" ]]; then
-  stock_off=$(jq -r '.disabledPlugins[]? | select(. == "omarchy.background")' "$SHELL_JSON" 2>/dev/null || echo "")
-  if [[ "$video_on" == "null" || -z $stock_off ]]; then
-    omarchy plugin enable io.github.p3lu.video-background
-    omarchy plugin disable omarchy.background
-  fi
-fi
-
-# 2) (Re)apply GPU decode acceleration while the plugin is active. This is
-#    cheap and idempotent: it detects the GPU, writes hwaccel.env, and keeps a
-#    systemd-user drop-in on the WM session up to date. No-op with a message
-#    when no GPU hwaccel is available (CPU decode).
-if [[ "$video_on" != "null" && -x "$PLUGIN_DIR/bin/video-hwaccel.sh" ]]; then
-  "$PLUGIN_DIR/bin/video-hwaccel.sh" --apply || true
-fi
+[[ -x "$PLUGIN_DIR/bin/video-bindings.sh" ]] || exit 0
+"$PLUGIN_DIR/bin/video-bindings.sh" --add --quiet || true
+[[ -x "$PLUGIN_DIR/bin/video-menu.sh" ]] && "$PLUGIN_DIR/bin/video-menu.sh" --add --quiet || true
 
 exit 0

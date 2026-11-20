@@ -114,16 +114,3 @@ if [[ -n $no_activate ]]; then
 else
   echo "done: video-$name is active. Cycle: Super+Ctrl+Alt+Left/Right."
 fi
-
-# --- GPU acceleration: first clip triggers auto-detection + apply --------------
-# Idempotent; only acts while the video-background plugin is enabled, and is a
-# no-op (with a message) when no GPU hwaccel is available. Runs best-effort so
-# it never fails the add.
-SHELL_JSON="$HOME/.config/omarchy/shell.json"
-if [[ -x "$PLUGIN_BIN/video-hwaccel.sh" ]]; then
-  plugin_on=$(jq -r '[.plugins[]?.id // empty] | index("io.github.p3lu.video-background")' "$SHELL_JSON" 2>/dev/null || echo null)
-  if [[ "$plugin_on" != "null" ]]; then
-    echo "configuring GPU video decode…"
-    "$PLUGIN_BIN/video-hwaccel.sh" --apply || true
-  fi
-fi
