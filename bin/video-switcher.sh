@@ -37,6 +37,7 @@ paired_video() { # <theme-dir> <base> → clip path or empty
   local d=$1 b=$2 e
   for e in mp4 mkv webm mov avi; do
     [[ -f "$d/videos/$b.$e" ]] && { printf '%s' "$d/videos/$b.$e"; return 0; }
+    [[ -f "$d/backgrounds/$b.$e" ]] && { printf '%s' "$d/backgrounds/$b.$e"; return 0; }
   done
   return 0
 }
@@ -57,15 +58,21 @@ fi
 declare -A theme_clips=()
 for tdir in "$USER_THEMES"/*/; do
   [[ -d $tdir ]] || continue
-  [[ -d "$tdir/backgrounds" && -d "$tdir/videos" ]] || continue
+  [[ -d "$tdir/backgrounds" ]] || continue
   t="${tdir%/}"; t="${t##*/}"
   clips=()
+  declare -A seen_base=()
   for poster in "$tdir"/backgrounds/*; do
     [[ -f $poster ]] || continue
-    base="${poster##*/}"; base="${base%.*}"
+    pb="${poster##*/}"; pe="${pb##*.}"; pe="${pe,,}"
+    case "$pe" in png|jpg|jpeg|webp|gif|bmp) ;; *) continue ;; esac
+    base="${pb%.*}"
+    [[ -z ${seen_base[$base]:-} ]] || continue
     [[ -n $(paired_video "$tdir" "$base") ]] || continue
+    seen_base[$base]=1
     clips+=("$(basename "$poster")")
   done
+  unset seen_base
   if (( ${#clips[@]} > 0 )); then
     # one clip per line — never space-join: clip names may contain spaces
     theme_clips["$t"]="$(printf '%s\n' "${clips[@]}" | sort)"

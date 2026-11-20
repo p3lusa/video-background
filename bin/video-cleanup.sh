@@ -22,6 +22,22 @@ CURRENT_THEME="$(tr -d '[:space:]' < "$HOME/.local/state/omarchy/current/theme.n
 
 # Keep set: the active theme + every theme in the cycle list.
 declare -A keep=()
+
+# --- migrate legacy videos/ layout to the native backgrounds/ layout ---------
+# Omarchy's picker/cycler lists clips that live in backgrounds/ next to the
+# posters; a separate videos/ subdir hides them from native tooling. Move
+# (never clobber) any clip found in a user theme's videos/ and drop the dir.
+for vdir in "$USER_THEMES"/*/videos; do
+  [[ -d $vdir && $vdir == "$USER_THEMES"/*/videos ]] || continue
+  for f in "$vdir"/*; do
+    [[ -e $f ]] || continue
+    if [[ ! -e "$(dirname "$vdir")/backgrounds/$(basename "$f")" ]]; then
+      mkdir -p "$(dirname "$vdir")/backgrounds"
+      mv "$f" "$(dirname "$vdir")/backgrounds/" 2>/dev/null || true
+    fi
+  done
+  rmdir "$vdir" 2>/dev/null || true
+done
 if [[ -n $CURRENT_THEME ]]; then
   keep["$CURRENT_THEME"]=1
 fi

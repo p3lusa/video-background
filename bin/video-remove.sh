@@ -27,10 +27,11 @@ for ext in mp4 mkv webm mov avi; do name="${name%".$ext"}"; done
 name="${name#video-}"
 
 # --- clip lookup by extension -------------------------------------------------
-paired_video() { # <theme-dir> <base> → clip path or empty (videos/ subdir)
+paired_video() { # <theme-dir> <base> → clip path or empty (backgrounds/ native, videos/ legacy)
   local d=$1 b=$2 e
   for e in mp4 mkv webm mov avi; do
     [[ -f "$d/videos/$b.$e" ]] && { printf '%s' "$d/videos/$b.$e"; return 0; }
+    [[ -f "$d/backgrounds/$b.$e" ]] && { printf '%s' "$d/backgrounds/$b.$e"; return 0; }
   done
   return 0
 }

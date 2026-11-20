@@ -3,7 +3,8 @@
 #
 # The library is the same set the switcher shows: every clip of every user
 # theme that has videos (a background poster with a paired video in
-# videos/). Theme order: the cycle list first (~/.config/omarchy/
+# backgrounds/, or the legacy videos/ subdir). Theme order: the cycle list
+# first (~/.config/omarchy/
 # video-themes, maintained by video-theme.sh), then any remaining video
 # themes alphabetically. Clips within a theme are alphabetical.
 #
@@ -34,10 +35,13 @@ fi
 direction="$1"
 
 # --- paired clip lookup -------------------------------------------------------
+# videos/<base>.* = legacy layout; backgrounds/<base>.* = native Omarchy
+# layout (clip stored beside its poster).
 paired_video() { # <theme-dir> <base> → clip path or empty
   local d=$1 b=$2 e
   for e in mp4 mkv webm mov avi; do
     [[ -f "$d/videos/$b.$e" ]] && { printf '%s' "$d/videos/$b.$e"; return 0; }
+    [[ -f "$d/backgrounds/$b.$e" ]] && { printf '%s' "$d/backgrounds/$b.$e"; return 0; }
   done
   return 0
 }
@@ -56,15 +60,21 @@ fi
 declare -A theme_clips=()
 for tdir in "$USER_THEMES"/*/; do
   [[ -d $tdir ]] || continue
-  [[ -d "$tdir/backgrounds" && -d "$tdir/videos" ]] || continue
+  [[ -d "$tdir/backgrounds" ]] || continue
   t="${tdir%/}"; t="${t##*/}"
   clips=()
+  declare -A seen_base=()
   for poster in "$tdir"/backgrounds/*; do
     [[ -f $poster ]] || continue
-    base="${poster##*/}"; base="${base%.*}"
+    pb="${poster##*/}"; pe="${pb##*.}"; pe="${pe,,}"
+    case "$pe" in png|jpg|jpeg|webp|gif|bmp) ;; *) continue ;; esac
+    base="${pb%.*}"
+    [[ -z ${seen_base[$base]:-} ]] || continue
     [[ -n $(paired_video "$tdir" "$base") ]] || continue
+    seen_base[$base]=1
     clips+=("$(basename "$poster")")
   done
+  unset seen_base
   if (( ${#clips[@]} > 0 )); then
     # one clip per line — never space-join: clip names may contain spaces
     theme_clips["$t"]="$(printf '%s\n' "${clips[@]}" | sort)"
@@ -73,7 +83,7 @@ done
 
 (( ${#theme_clips[@]} > 0 )) || {
   echo "error: no videos found in $USER_THEMES." >&2
-  echo "       a video theme needs backgrounds/ posters with paired videos/ clips." >&2
+  echo "       a video theme needs backgrounds/ posters with paired clips in backgrounds/." >&2
   exit 1
 }
 
@@ -143,7 +153,7 @@ n=${#entries[@]}
 idx=-1
 for i in "${!entries[@]}"; do
   IFS=$'\t' read -r et ec <<<"${entries[$i]}"
-  if [[ $et == "$CURRENT_THEME" && $ec == "$CUR_BASE".* ]]; then
+  if [[ $et == "$CURRENT_THEME" && ( $ec == "$CUR_BASE" || $ec == "$CUR_BASE".* ) ]]; then
     idx=$i
     break
   fi
@@ -179,7 +189,10 @@ fi
 clip_video="$(paired_video "$HOME/.local/state/omarchy/current/theme" "$clip_base")"
 if [[ -z $clip_video ]]; then
   # Defensive: the scan above guarantees a paired clip; fall back to poster.
-  clip_video="$HOME/.local/state/omarchy/current/theme/backgrounds/$c"
+  clip_video="$(find "$HOME/.local/state/omarchy/current/theme/backgrounds" \
+    -maxdepth 1 -type f -name "$c" \
+    ! -name '*.mp4' ! -name '*.mkv' ! -name '*.webm' ! -name '*.mov' ! -name '*.avi' \
+    -print -quit 2>/dev/null || true)"
 fi
 staged_bg="$(readlink -f "$HOME/.local/state/omarchy/current/background" 2>/dev/null || true)"
 if [[ ${staged_bg##*/} != "${clip_video##*/}" ]]; then

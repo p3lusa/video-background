@@ -78,7 +78,7 @@ if [[ -f "$USER_THEMES/video-$name/.video-theme" ]]; then
   exit 1
 fi
 for tdir in "$USER_THEMES"/*/; do
-  if [[ -f "${tdir}videos/$name.mp4" ]]; then
+  if [[ -f "${tdir}backgrounds/$name.mp4" || -f "${tdir}videos/$name.mp4" ]]; then
     echo "error: '$name' already exists in theme '${tdir%/}'." >&2
     echo "       remove it first: video-remove.sh $name" >&2
     exit 1
@@ -96,8 +96,9 @@ fi
 # --- mirror into the library theme (hardlinks, zero extra space) -------------
 lib="$USER_THEMES/$LIBRARY_THEME"
 if [[ -d $lib ]]; then
-  mkdir -p "$lib/videos" "$lib/backgrounds"
-  ln -f "$USER_THEMES/video-$name/videos/$name.mp4" "$lib/videos/$name.mp4"
+  mkdir -p "$lib/backgrounds"
+  ln -f "$USER_THEMES/video-$name/backgrounds/$name.mp4" "$lib/backgrounds/$name.mp4" 2>/dev/null \
+    || ln -f "$USER_THEMES/video-$name/videos/$name.mp4" "$lib/backgrounds/$name.mp4"
   # Mirror the poster under whatever extension video-theme.sh produced
   # (png today; the theme repo ships webp for compressed posters).
   src_poster="$(find "$USER_THEMES/video-$name/backgrounds" -maxdepth 1 -name "$name.*" -print -quit 2>/dev/null)"

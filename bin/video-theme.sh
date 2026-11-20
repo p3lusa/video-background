@@ -140,8 +140,8 @@ printf 'clip=%s\ncreated=%s\n' "$(basename "$clip")" "$(date -Is)" > "${theme_sr
 # poster Aether generated to match.
 clip_base="$(basename "$clip")"
 clip_base="${clip_base%.*}"
-mkdir -p "${theme_src}/videos"
-cp "$clip" "${theme_src}/videos/$(basename "$clip")"
+mkdir -p "${theme_src}/backgrounds"
+cp "$clip" "${theme_src}/backgrounds/$(basename "$clip")"
 poster_file="$(find "${theme_src}/backgrounds" -maxdepth 1 -name '*.png' 2>/dev/null | head -1)"
 if [[ -n "$poster_file" ]]; then
   mv "$poster_file" "${theme_src}/backgrounds/${clip_base}.png"
@@ -171,7 +171,7 @@ else
   "$(dirname "${BASH_SOURCE[0]}")/video-wait-intro.sh" || true
   # Name the clip itself in the background symlink (OWE renders the mp4;
   # the poster in backgrounds/ stays as its still partner).
-  omarchy theme bg set "$theme_src/videos/$(basename "$clip")" >/dev/null 2>&1 || true
+  omarchy theme bg set "$theme_src/backgrounds/$(basename "$clip")" >/dev/null 2>&1 || true
 fi
 
 # --- 5. register in the video-theme cycle ----------------------------------------
@@ -189,5 +189,5 @@ else
   echo "Theme '$name' is active."
 fi
 echo "  source: $theme_src"
-echo "  video : videos/$(basename "$clip")"
+echo "  video : backgrounds/$(basename "$clip")"
 echo "  cycle : video-next / video-prev (registered in $cycle_list)"
