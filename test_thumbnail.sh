@@ -78,7 +78,7 @@ pc=$(sed -E 's/.*c=([0-9]+),.*/\1/' <<<"$place")
 pr=$(sed -E 's/.*,r=([0-9]+)/\1/' <<<"$place")
 iw=1280; ih=720   # the 16:9 poster this test generates
 pane_c=$(( $(tput cols 2>/dev/null || echo 80) - 2 ))
-maxr=$(( $(tput lines 2>/dev/null || echo 24) - 9 )); (( maxr < 8 )) && maxr=8
+maxr=$(( $(tput lines 2>/dev/null || echo 24) - 10 )); (( maxr < 8 )) && maxr=8
 CW=${CELL_W:-8}; CH=${CELL_H:-17}
 or=$(( (pane_c * ih * CW + iw * CH / 2) / (iw * CH) ))
 if (( or > maxr )); then
@@ -152,6 +152,18 @@ if [[ -n $thumb ]]; then
   fi
 fi
 
+term=$'\033\\'                      # APC terminator (ESC + backslash)
+# re-run with a sentinel: $(...) strips trailing newlines, and the padding
+# after the placement IS the tail — the sentinel keeps it measurable.
+outG=$(render_poster "test" 2>/dev/null; printf X)
+tail_after=${outG##*"$term"}        # strip through the final placement APC
+gap=${tail_after//[!$'\n']/}        # keep only newlines
+gap=${#gap}
+if [[ $gap == "$((pr+1))" ]]; then
+  ok "separator blank line between picture and card (rows+1 = $gap newlines)"
+else
+  bad "gap after placement: got $gap expected $((pr+1))"
+
 # 9) a clip with NO poster must not emit a transmit (and clears placements)
 printf 'noposter\tvideo-test\t%s/videos/test.mp4\town\n' "$THEME" > "$SESSION/library.tsv"
 rm -f "$SESSION"/poster-*
@@ -162,6 +174,11 @@ if printf '%s' "$out2" | grep -qao $'\033_Ga=d\033' && ! printf '%s' "$out2" | g
   ok "no-poster clip: clears placements, emits no transmit"
 else
   bad "no-poster clip: clears placements, emits no transmit"
+fi
+
+# 6c) one extra separator newline between the picture bottom and the text
+# card (padding = rows+1 after the placement). Last record after the final
+# APC terminator is exactly that run of newlines.
 fi
 
 echo

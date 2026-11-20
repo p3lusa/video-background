@@ -311,9 +311,10 @@ render_poster() { # <name>
   # Usable box width = preview pane minus the rounded border (1 cell each side).
   c=$(( cols - 2 )); (( c < 12 )) && c=12
   # Reserve rows for the text card printed below the poster (name/rule/theme/
-  # kind/status/media/hint ≈ 9 rows in preview_cmd) so the image never overlaps
-  # it. The image gets the rest of the pane height — this is the HEIGHT bound.
-  local cardrows=9
+  # kind/status/media/hint ≈ 9 rows in preview_cmd + 1 blank separator row)
+  # so the image never overlaps it. The image gets the rest of the pane
+  # height — this is the HEIGHT bound.
+  local cardrows=10
   maxrows=$(( rows_total - cardrows )); (( maxrows < 8 )) && maxrows=8
   # ffprobe csv is "W,H" — split on the comma (read's default IFS is
   # whitespace, which would leave ih empty).
@@ -394,13 +395,14 @@ render_poster() { # <name>
   # Emit the image, then (kitty) the display placement, then enough newlines
   # to push the text card below the picture. fzf's preview pane does not
   # reserve rows for a kitty image, so without this padding the metadata card
-  # renders on top of it. sixel advances the cursor on its own — keep the
-  # original single newline there.
+  # renders on top of it. One extra newline separates the picture from the
+  # card (the gap the cardrows=10 budget accounts for). sixel advances the
+  # cursor on its own — keep the original single newline there.
   cat "$cache"
   if [[ $IMG_PROTO == kitty ]]; then
     if (( rows > 0 )); then
       printf '\033_Ga=p,c=%s,r=%s\033\\' "$boxc" "$rows"
-      for ((i=0;i<rows;i++)); do printf '\n'; done
+      for ((i=0;i<rows+1;i++)); do printf '\n'; done
     fi
   else
     printf '\n'
@@ -1166,6 +1168,35 @@ main() {
 
     rm -f "$SESSION/action"
     rc=0
+    # Resize watcher: fzf caches previews per item and NEVER re-runs them on
+    # SIGWINCH (verified empirically on 0.74.5 — SIGWINCH, control-socket
+    # redraw/refresh/reload/preview-resalt and SIGUSR1 all fail to force an
+    # in-place re-preview), so a kitty poster would keep its old size and
+    # orphan the text card after a window change. Remedy: watch the tty
+    # geometry (TCGETS ioctl — legal for a background job, no SIGTTIN), and
+    # on change end fzf through its control socket (`accept`, a safe action);
+    # the RESIZED marker below turns that exit into a silent re-launch, which
+    # re-renders the whole UI — poster included — at the new geometry.
+    rm -f "$SESSION/RESIZED" "$SESSION/fzf-ui.sock"
+    local RESIZE_WATCH=""
+    if command -v curl >/dev/null 2>&1; then
+      (
+        local lastsz="" cur
+        while :; do
+          sleep 0.4
+          cur=$(stty size </dev/tty 2>/dev/null) || exit 0
+          if [[ -n $lastsz && $cur != "$lastsz" ]]; then
+            touch "$SESSION/RESIZED"
+            curl -fsS --unix-socket "$SESSION/fzf-ui.sock" \
+              http://localhost/ --data-binary accept >/dev/null 2>&1
+            exit 0
+          fi
+          lastsz=$cur
+        done
+      ) &
+      RESIZE_WATCH=$!
+    fi
+
     out=$(build_list | fzf \
         --height "90%" \
         --border \
@@ -1177,6 +1208,7 @@ main() {
         --footer "$(build_footer)" \
         --preview "preview_cmd {}" \
         --preview-window "right:45%,border-rounded" \
+        --listen="$SESSION/fzf-ui.sock" \
         --bind "a:execute-silent(echo ADD > $SESSION/action)+abort" \
         --bind "r:execute-silent(printf '%s\\n' {} > $SESSION/rline)+abort" \
         --bind "e:execute-silent(printf '%s\\n' {} > $SESSION/eline)+abort" \
@@ -1186,6 +1218,12 @@ main() {
         --bind "q:abort,esc:abort" \
         --color "$(fzf_colors)" \
         2>/dev/null) || rc=$?
+
+    [[ -n $RESIZE_WATCH ]] && { kill "$RESIZE_WATCH" 2>/dev/null; wait "$RESIZE_WATCH" 2>/dev/null; }
+    if [[ -f $SESSION/RESIZED ]]; then   # geometry changed mid-browse: re-render
+      rm -f "$SESSION/RESIZED" "$SESSION/fzf-ui.sock"
+      continue
+    fi
 
     action=$(cat "$SESSION/action" 2>/dev/null) || action=""
     rm -f "$SESSION/action"
