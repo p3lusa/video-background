@@ -11,16 +11,30 @@ Rendering is delegated to `owed` (the OWE wallpaper daemon, native to Omarchy
 fullscreen, DPMS, sleep, battery), GIF transcoding, and login intros. This
 plugin adds the library, the per-clip theming, and the hotkeys on top.
 
-## Requirements
+## Install
 
-- Omarchy 4.5+.
-- The wallpaper engine:
-  ```bash
-  omarchy pkg add owe
-  systemctl --user enable --now owed.service
-  ```
-  The plugin ships no renderer of its own (since v0.8); it drives owe through
-  the plain Omarchy background symlink.
+```bash
+omarchy pkg add owe            # the wallpaper engine (one time; needs password)
+omarchy plugin add https://github.com/p3lusa/video-background --enable
+```
+
+One command after the engine: enabling the plugin bootstraps everything else by
+itself —
+
+- the keybindings and the `omarchy` menu entry are installed automatically,
+- the companion clip pack [`video-wallpaper`](https://github.com/p3lusa/video-wallpaper)
+  is installed **only if missing** (your themes are never touched; opt out with
+  `touch ~/.local/state/io.github.p3lu.video-background/skip-theme`),
+- if `owe` is not installed yet you get a one-time notification with the exact
+  command, and the theme install completes itself on the next shell load.
+
+The new shortcuts appear in Omarchy's keybindings menu (`Super+Ctrl+Space`
+picker, `Super+Ctrl+Alt+Left/Right` cycle, `Super+Ctrl+Alt+V` manager — the
+same list `hyprctl binds` reports).
+
+This plugin ships no renderer of its own (since v0.8); it drives
+[`owed`](https://github.com/omacom/owe) — Omarchy 4.5+'s native wallpaper
+daemon — through the plain Omarchy background symlink.
 
 ## How it works
 
@@ -174,6 +188,7 @@ by Omarchy's own boot plumbing — nothing to install.
 ```bash
 ~/.config/omarchy/plugins/io.github.p3lu.video-background/bin/video-bindings.sh --remove
 omarchy plugin remove io.github.p3lu.video-background --yes
+omarchy theme remove video-wallpaper      # the auto-installed companion pack
 omarchy theme remove <video-theme-name>   # per-clip themes are regular themes
 ```
 
