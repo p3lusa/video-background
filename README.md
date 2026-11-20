@@ -45,15 +45,17 @@ That's all. The plugin no longer replaces the stock background service — the
 stock service draws stills and owe takes the layer while a video plays, so
 there is nothing to disable.
 
-### Companion theme (recommended)
+### Companion theme (auto-installed)
 
 The [**video-wallpaper theme**](https://github.com/p3lusa/video-wallpaper)
 provides the library home `video-add` mirrors into, sample clips, and the
-neon skin:
+neon skin. The plugin **installs it automatically** the first time the
+shell loads it (enable/rescan/restart) — you only need `omarchy plugin add`.
 
-```bash
-omarchy theme install https://github.com/p3lusa/video-wallpaper.git
-```
+- Already have it (or a theme of your own at that name)? Nothing is
+  touched, ever.
+- Don't want it? `mkdir -p ~/.local/state/io.github.p3lu.video-background
+  && touch ~/.local/state/io.github.p3lu.video-background/skip-theme`
 
 The theme alone only shows static images — this plugin is what turns a clip
 into video + palette.
