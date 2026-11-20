@@ -164,6 +164,9 @@ if [[ $t != "$CURRENT_THEME" ]]; then
     echo "error: omarchy theme set $t failed" >&2
     exit 1
   fi
+  # The theme set may have started a backgrounds/intros/<stem> intro (native
+  # Omarchy plumbing); loading the loop now would kill it — let it finish.
+  "$(dirname "${BASH_SOURCE[0]}")/video-wait-intro.sh" || true
 fi
 
 # Point the background at the CLIP itself (the mp4). With the OWE backend the

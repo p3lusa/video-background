@@ -6,7 +6,11 @@
 # the clip is installed as the theme's looping video wallpaper.
 #
 # Usage:
-#   video-theme.sh [--no-activate] <clip.mp4> [theme-name]
+#   video-theme.sh [--no-activate] [--intro <clip>] <clip.mp4> [theme-name]
+#
+# --intro installs a one-shot intro video (native Omarchy 4.5 convention:
+# backgrounds/intros/<poster-stem>.<ext>, played at login and on theme
+# switch, max 30 s, then the loop takes over).
 #
 # Example:
 #   video-theme.sh ~/Videos/aurora.mp4            # theme "video-aurora"
@@ -40,10 +44,17 @@ set -euo pipefail
 "$(dirname "${BASH_SOURCE[0]}")/video-menu.sh" --add --quiet || true
 
 no_activate=""
-if [[ ${1:-} == "--no-activate" ]]; then
-  no_activate=1
-  shift
-fi
+intro_file=""
+while [[ ${1:-} == --* ]]; do
+  case "$1" in
+    --no-activate) no_activate=1; shift ;;
+    --intro)
+      [[ ${2:-} ]] || { echo "error: --intro needs a video file" >&2; exit 2; }
+      [[ -f $2 ]] || { echo "error: intro not found: $2" >&2; exit 1; }
+      intro_file="$2"; shift 2 ;;
+    *) echo "error: unknown option: $1" >&2; exit 2 ;;
+  esac
+done
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
   echo "Usage: $(basename "$0") [--no-activate] <clip.mp4> [theme-name]" >&2
@@ -136,6 +147,17 @@ if [[ -n "$poster_file" ]]; then
   mv "$poster_file" "${theme_src}/backgrounds/${clip_base}.png"
 fi
 
+# Optional one-shot intro (native Omarchy 4.5 convention):
+# backgrounds/intros/<poster-stem>.<ext> plays at login and on theme switch,
+# then the loop below takes over. Name must match the poster stem.
+if [[ -n $intro_file ]]; then
+  mkdir -p "${theme_src}/backgrounds/intros"
+  ext="${intro_file##*.}"
+  ln -f "$intro_file" "${theme_src}/backgrounds/intros/${clip_base}.${ext}" 2>/dev/null \
+    || cp "$intro_file" "${theme_src}/backgrounds/intros/${clip_base}.${ext}"
+  echo "intro installed: backgrounds/intros/${clip_base}.${ext}"
+fi
+
 # --- 4. activate (skippable: --no-activate keeps the current wallpaper) -------------
 if [[ -n $no_activate ]]; then
   echo "skipping activation (--no-activate); current wallpaper unchanged."
@@ -144,6 +166,9 @@ else
     echo "error: omarchy theme set $name failed" >&2
     exit 1
   fi
+  # Let a theme-switch intro (backgrounds/intros/<poster>.* installed with
+  # --intro) finish before the loop takes over; loading now would kill it.
+  "$(dirname "${BASH_SOURCE[0]}")/video-wait-intro.sh" || true
   # Name the clip itself in the background symlink (OWE renders the mp4;
   # the poster in backgrounds/ stays as its still partner).
   omarchy theme bg set "$theme_src/videos/$(basename "$clip")" >/dev/null 2>&1 || true

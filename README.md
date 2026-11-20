@@ -144,6 +144,25 @@ ffmpeg -i input.mp4 -an -c:v libx264 -crf 23 -preset slow \
   -r 30 -vf "scale=1920:1080" -t 20 -movflags +faststart output.mp4
 ```
 
+## Intros (one-shot clips)
+
+Any theme can ship a native Omarchy 4.5 intro: a video at
+`backgrounds/intros/<poster-stem>.<ext>` next to the poster. It plays once
+(muted, ≤30 s) at login and on theme switch, fades into the still, and this
+plugin then hands the wallpaper to the loop — the cycle/switcher/TUI wait
+for the intro instead of killing it.
+
+Create one while adding a clip:
+
+```bash
+video-theme.sh ~/Videos/aurora.mp4 --intro ~/Videos/aurora-teaser.mp4
+```
+
+(≤30 s; same base name as the poster is enforced for you). Enable/disable
+globally from the TUI engine menu (`intros: on/off`) or with
+`omarchy theme bg intro toggle`. The login intro is resolved automatically
+by Omarchy's own boot plumbing — nothing to install.
+
 ## Uninstall
 
 ```bash

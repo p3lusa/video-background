@@ -165,6 +165,8 @@ fi
 
 if [[ $entry_theme != "$CURRENT_THEME" ]]; then
   omarchy theme set "$entry_theme"
+  # let a theme-switch intro finish before the loop load replaces it
+  "$PLUGIN_BIN/video-wait-intro.sh" || true
 fi
 # OWE backend: name the CLIP so owed renders it; poster stays behind it
 # as the still partner. Fall back to the poster if the clip vanished mid-run.

@@ -796,9 +796,10 @@ do_engine() {
   fi
   choice=$(gum choose \
     --header "$(col "$ACC" "OWE engine") $(col "$MUT" "esc to go back")" \
-    --height 9 \
+    --height 11 \
     "status" "pause" "resume" "always-animate on" "always-animate off" \
     "battery mode: poster" "battery mode: play" "battery mode: pause" \
+    "intros: on" "intros: off" \
     "back" 2>/dev/null) || return
   case $choice in
     status)
@@ -811,6 +812,8 @@ do_engine() {
     battery\ mode:\ poster) FEEDBACK=$("$owe" battery poster 2>&1) ;;
     battery\ mode:\ play)   FEEDBACK=$("$owe" battery play 2>&1) ;;
     battery\ mode:\ pause)  FEEDBACK=$("$owe" battery pause 2>&1) ;;
+    intros:\ on)  FEEDBACK=$("$owe" intro on 2>&1) ;;
+    intros:\ off) FEEDBACK=$("$owe" intro off 2>&1) ;;
     *) FEEDBACK="" ;;
   esac
 }

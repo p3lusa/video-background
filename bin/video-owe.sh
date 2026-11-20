@@ -88,6 +88,12 @@ case "${1:-status}" in
     echo "ok: battery_mode = $mode ($cfg)"
     ;;
 
+  intro)
+    case "${2:-}" in on|off) : ;; *) echo "usage: video-owe.sh intro on|off" >&2; exit 2 ;; esac
+    omarchy theme bg intro "$2" >/dev/null 2>&1 || true
+    echo "ok: background intros $2"
+    ;;
+
   extensions)
     printf '%s\n' "${OWE_EXTENSIONS[@]}"
     ;;
