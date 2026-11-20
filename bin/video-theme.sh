@@ -22,7 +22,7 @@
 # pair with one command.
 #
 # Requirements: aether, ffmpeg, omarchy, and the io.github.p3lu.video-background
-# plugin (to render the videos/ directory — without it, the theme shows
+# plugin (to render the clip in backgrounds/ — without it, the theme shows
 # the poster image instead).
 #
 # Notes:
@@ -30,8 +30,8 @@
 #     marked as Aether-managed (.aether-managed), so future Aether runs
 #     recognize it.
 #   - Theme names must match [A-Za-z0-9][A-Za-z0-9_.-]{0,63} (lowercased).
-#   - To update the clip later, replace the file in the theme's videos/
-#     directory and run: omarchy theme set <theme-name>
+#   - To update the clip later, replace the file in the theme's
+#     backgrounds/ directory and run: omarchy theme set <theme-name>
 
 set -euo pipefail
 

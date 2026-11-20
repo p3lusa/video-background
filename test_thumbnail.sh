@@ -70,6 +70,23 @@ else
   bad "placement a=p,c=<cols> present"
 fi
 
+# 6b) SIZE sanity: the placement box must have (near) the image's pixel
+# aspect ratio — cells are ~8x17 px, so c*8/(r*17) ≈ iw/ih (16:9 poster).
+# Square-cell math (the old bug) halved the box width for tall panes.
+place=$(printf '%s' "$out" | grep -ao $'\033_Ga=p,c=[0-9]*,r=[0-9]*' | head -1)
+pc=$(sed -E 's/.*c=([0-9]+),.*/\1/' <<<"$place")
+pr=$(sed -E 's/.*,r=([0-9]+)/\1/' <<<"$place")
+if [[ -n $pc && -n $pr ]] && (( pr > 0 && pc > 0 )); then
+  # |100*(c*8*ih - r*17*iw)| vs 10% of c*8*ih — for 16:9 (iw=1280, ih=720):
+  lhs=$(( pc * 8 * 720 )); rhs=$(( pr * 17 * 1280 ))
+  diff=$(( lhs - rhs )); (( diff < 0 )) && diff=$(( -diff ))
+  tol=$(( lhs / 10 ))
+  (( diff <= tol )) && ok "placement box aspect ≈ image aspect (c=$pc r=$pr)" \
+                    || bad "placement box aspect off (c=$pc r=$pr, diff=$diff tol=$tol)"
+else
+  bad "placement carries both c= and r="
+fi
+
 # 7) no transmit may carry a w= display-width (that's the old broken form)
 if printf '%s' "$out" | grep -qao $'\033_Ga=T[^\\]*w='; then
   bad "transmit carries no w= (old broken form)"

@@ -196,7 +196,7 @@ poster_for() { # <name> → path or ""
   [[ -z $row ]] && return 0
   # columns: name 	 theme 	 file 	 kind
   IFS=$'	' read -r base theme f kind <<<"$row"
-  # derive the theme dir from the video file path: .../<theme>/videos/<base>.mp4
+  # derive the theme dir from the video file path: .../<theme>/{backgrounds,videos}/<base>.<ext>
   tdir=$(dirname "$(dirname "$f")")
   for c in "$tdir/backgrounds/$base.png" "$tdir/backgrounds/$base.jpg" \
            "$tdir/backgrounds/$base.jpeg" "$tdir/backgrounds/$base.webp"; do
@@ -272,26 +272,28 @@ render_poster() { # <name>
   iw=${iw:-0}; ih=${ih:-0}
   # Box width in columns (starts at the full pane width `c`), and the rows
   # the image occupies at that width from the poster's aspect ratio (ih/iw).
+  # CELLS ARE NOT SQUARE: a monospace cell is ~8x17 px, so a box of W cols x
+  # R rows has pixel aspect (W*8)/(R*17) — the image-height in ROWS for a box
+  # W cells wide is W * (ih/iw) * (8/17) = W*ih*10 / (iw*21) (cell factor
+  # 2.1 as an integer ratio; kitty fits the image inside the c x r box either
+  # way, and matching the box's pixel aspect to the image's makes the
+  # thumbnail as large as the pane allows — counting rows with square cells
+  # overestimated the height ~2x and needlessly narrowed the box).
   boxc=$c
   rows=0
   if (( iw > 0 && ih > 0 )); then
-    rows=$(( (c * ih + iw / 2) / iw )); (( rows < 1 )) && rows=1
+    rows=$(( (c * ih * 10 + iw * 21 / 2) / (iw * 21) )); (( rows < 1 )) && rows=1
     # Fit the height: if the full-pane width would exceed maxrows, shrink the
-    # box so the image fills exactly maxrows rows (preserving aspect). The box
-    # width in COLUMNS that yields a height of maxrows is maxrows * iw/ih —
-    # note it scales with the SOURCE aspect ratio (iw/ih), NOT with the pane
-    # width. (An earlier version used `c * maxrows / ih`, which for a wide
-    # source (iw >> c) collapsed boxc to the 8-col minimum, so the poster was
-    # a tiny ~64px thumbnail even on a fullscreen terminal.)
+    # box so the image fills exactly maxrows rows (preserving aspect).
     if (( rows > maxrows )); then
-      boxc=$(( (maxrows * iw + ih / 2) / ih )); (( boxc < 8 )) && boxc=8
-      rows=$(( (boxc * ih + iw / 2) / iw )); (( rows < 1 )) && rows=1
+      boxc=$(( (maxrows * iw * 21 + ih * 10 / 2) / (ih * 10) )); (( boxc < 8 )) && boxc=8
+      rows=$(( (boxc * ih * 10 + iw * 21 / 2) / (iw * 21) )); (( rows < 1 )) && rows=1
       (( rows > maxrows )) && rows=$maxrows
     fi
   fi
   # Pixel resolution follows the final box width (~8 px per monospace cell),
   # so the cached PNG matches what the placement box will display.
-  w=$(( boxc * 8 )); (( w > 720 )) && w=720
+  w=$(( boxc * 8 )); (( w > 1024 )) && w=1024
   # basename removes the directory; strip any image extension to get a clean
   # cache key (remove everything from the first dot).
   cache="$SESSION/poster-$(basename "$p" | sed 's/\.[^.]*$//')-$w.img"
