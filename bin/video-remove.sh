@@ -23,8 +23,22 @@ if [[ $# -ne 1 || -z ${1:-} ]]; then
   exit 2
 fi
 name="$1"
-name="${name%.mp4}"
+for ext in mp4 mkv webm mov avi; do name="${name%.$ext}"; done
 name="${name#video-}"
+
+# --- clip lookup by extension -------------------------------------------------
+paired_video() { # <theme-dir> <base> → clip path or empty (videos/ subdir)
+  local d=$1 b=$2 e
+  for e in mp4 mkv webm mov avi; do
+    [[ -f "$d/videos/$b.$e" ]] && { printf '%s' "$d/videos/$b.$e"; return 0; }
+  done
+  return 0
+}
+any_clip() { # <dir> <name> → true when dir holds <name>.<ext> (allowlist)
+  local d=$1 n=$2 e
+  for e in mp4 mkv webm mov avi; do [[ -f "$d/$n.$e" ]] && return 0; done
+  return 1
+}
 
 # --- locate -------------------------------------------------------------------
 perclip="$USER_THEMES/video-$name"
@@ -33,11 +47,11 @@ has_perclip=false
 
 declare -A lib_copies=()
 for tdir in "$USER_THEMES"/*/; do
-  # Check both new structure (videos/) and legacy (backgrounds/ with .mp4)
-  if [[ -f "${tdir}videos/$name.mp4" ]]; then
+  # Check both new structure (videos/) and legacy (backgrounds/ with a clip)
+  if any_clip "${tdir}videos" "$name"; then
     [[ "${tdir%/}" == "$perclip" ]] && continue
     lib_copies["${tdir%/}"]="videos"
-  elif [[ -f "${tdir}backgrounds/$name.mp4" ]]; then
+  elif any_clip "${tdir}backgrounds" "$name"; then
     [[ "${tdir%/}" == "$perclip" ]] && continue
     lib_copies["${tdir%/}"]="backgrounds"
   fi
@@ -69,7 +83,7 @@ paired_clip_exists() {
     [[ -f $poster ]] || continue
     base="${poster##*/}"; base="${base%.*}"
     [[ $base == "$ex" ]] && continue
-    [[ -f "$tdir/videos/$base.mp4" ]] && return 0
+    paired_video "$tdir" "$base" | grep -q . && return 0
   done
   return 1
 }
@@ -81,7 +95,7 @@ if [[ $CUR_BASE == "$name" ]]; then
     # the active theme goes away: switch to another video theme
     fallback=""
     if [[ -d "$USER_THEMES/video-wallpaper/videos" ]] && \
-       [[ -n $(find "$USER_THEMES/video-wallpaper/videos" -name '*.mp4' ! -name "$name.mp4" 2>/dev/null | head -1) ]]; then
+       [[ -n $(find "$USER_THEMES/video-wallpaper/videos" -type f \( -name '*.mp4' -o -name '*.mkv' -o -name '*.webm' -o -name '*.mov' -o -name '*.avi' \) ! -name "$name.*" 2>/dev/null | head -1) ]]; then
       # only fall back to video-wallpaper if a remaining clip is still
       # paired with a poster (unpaired clips don't play)
       if paired_clip_exists "$USER_THEMES/video-wallpaper" "$name"; then
@@ -121,7 +135,7 @@ if $has_perclip; then
 fi
 for t in "${!lib_copies[@]}"; do
   subdir="${lib_copies[$t]}"
-  rm -f "$t/$subdir/$name.mp4"
+  rm -f "$t/$subdir/$name".{mp4,mkv,webm,mov,avi}
   rm -f "$t/backgrounds/$name".{png,jpg,jpeg,webp,gif,bmp}
   echo "removed library copy in $t."
 done
@@ -138,10 +152,11 @@ if [[ -z $staged_bg || ! -f $staged_bg ]]; then
   staged_theme="$HOME/.local/state/omarchy/current/theme"
   first_bg="$(find "$staged_theme/backgrounds" -type f 2>/dev/null | sort | head -1)"
   if [[ -n $first_bg ]]; then
-    # Prefer the poster's paired clip: the OWE backend renders the mp4 named
+    # Prefer the poster's paired clip: the OWE backend renders the clip named
     # by the symlink; the poster only heals when no clip pairs it.
     fb_base="${first_bg##*/}"; fb_base="${fb_base%.*}"
-    [[ -f "$staged_theme/videos/$fb_base.mp4" ]] && first_bg="$staged_theme/videos/$fb_base.mp4"
+    pv="$(paired_video "$staged_theme" "$fb_base")"
+    [[ -n $pv ]] && first_bg="$pv"
     omarchy theme bg set "$first_bg" >/dev/null 2>&1 || true
   else
     # the active theme has no backgrounds left: switch to one that does

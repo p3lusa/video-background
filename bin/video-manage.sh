@@ -95,8 +95,8 @@ scan_library() {
   for t in "$THEMES_USER"/* "$THEMES_SYS"/*; do
     [[ -d $t && -d $t/backgrounds && -f $t/.video-theme ]] || continue
     b=$(basename "$t")
-    for f in "$t"/videos/*.mp4; do [[ -e $f ]] && claim["$(basename "$f" .mp4)"]=1; done
-    for f in "$t"/backgrounds/*.mp4; do [[ -e $f ]] && claim["$(basename "$f" .mp4)"]=1; done
+    for f in "$t"/videos/*.mp4 "$t"/videos/*.mkv "$t"/videos/*.webm "$t"/videos/*.mov "$t"/videos/*.avi; do [[ -e $f ]] && { b2="${f##*/}"; claim["${b2%.*}"]=1; }; done
+    for f in "$t"/backgrounds/*.mp4 "$t"/backgrounds/*.mkv "$t"/backgrounds/*.webm "$t"/backgrounds/*.mov "$t"/backgrounds/*.avi; do [[ -e $f ]] && { b2="${f##*/}"; claim["${b2%.*}"]=1; }; done
   done
   # pass 2: emit. per-clip themes emit their clips as `own`; library themes
   # emit only the clips no per-clip theme claimed (as `lib`).
@@ -106,9 +106,9 @@ scan_library() {
     perclip=0
     [[ -f $t/.video-theme ]] && perclip=1
     if [[ -d $t/videos ]]; then
-      for f in "$t"/videos/*.mp4; do
+      for f in "$t"/videos/*.mp4 "$t"/videos/*.mkv "$t"/videos/*.webm "$t"/videos/*.mov "$t"/videos/*.avi; do
         [[ -e $f ]] || continue
-        base=$(basename "$f" .mp4)
+        base="${f##*/}"; base="${base%.*}"
         if [[ $perclip == 1 ]]; then
           printf '%s\t%s\t%s\t%s\n' "$base" "$b" "$f" own >> "$tmp"
         elif [[ -z ${claim["$base"]:-} ]]; then
@@ -116,9 +116,9 @@ scan_library() {
         fi
       done
     fi
-    for f in "$t"/backgrounds/*.mp4; do
+    for f in "$t"/backgrounds/*.mp4 "$t"/backgrounds/*.mkv "$t"/backgrounds/*.webm "$t"/backgrounds/*.mov "$t"/backgrounds/*.avi; do
       [[ -e $f ]] || continue
-      base=$(basename "$f" .mp4)
+      base="${f##*/}"; base="${base%.*}"
       if [[ $perclip == 1 ]]; then
         printf '%s\t%s\t%s\t%s\n' "$base" "$b" "$f" own >> "$tmp"
       elif [[ -z ${claim["$base"]:-} ]]; then
@@ -148,7 +148,7 @@ current_state() {
 # ffprobe metadata, cached per clip (invalidated by mtime).
 clip_meta() { # <file> → "20s · 1920x1080@30fps · 12.3 MB"
   local file=$1
-  local m="$META_DIR/$(basename "$file" .mp4).meta"
+  local b="${file##*/}"; local m="$META_DIR/${b%.*}.meta"
   if [[ ! -f $m || $file -nt $m ]]; then
     local out w h rate dur size fps dur_s size_mb
     out=$(ffprobe -v error -select_streams v:0 \
@@ -414,6 +414,7 @@ build_list() {
   printf '%s\n' "$(col "$ACC" "$I_ADD  ")$(col "$TXT" "Add a video (a key) · multi-select / bulk")"
   printf '%s\n' "$(col "$ACC" "$I_RM   ")$(col "$TXT" "Remove a video (r key)")"
   printf '%s\n' "$(col "$ACC" "$I_HELP ")$(col "$TXT" "Edit palette (e key) · Aether re-extract")"
+  printf '%s\n' "$(col "$ACC" "$I_HELP ")$(col "$TXT" "Engine (o key) · owe status · pause · battery policy")"
   printf '%s\n' "$(col "$ACC" "$I_HELP ")$(col "$TXT" "How to use (h key)")"
 }
 
@@ -787,6 +788,34 @@ do_play() { # <name>
   FEEDBACK="playing $name · $theme"
 }
 
+do_engine() {
+  local owe="$PLUGIN_BIN/video-owe.sh" choice out
+  if [[ ! -x $owe ]] || ! "$owe" has; then
+    FEEDBACK="engine: owe is not running — install it: omarchy pkg add owe"
+    return
+  fi
+  choice=$(gum choose \
+    --header "$(col "$ACC" "OWE engine") $(col "$MUT" "esc to go back")" \
+    --height 9 \
+    "status" "pause" "resume" "always-animate on" "always-animate off" \
+    "battery mode: poster" "battery mode: play" "battery mode: pause" \
+    "back" 2>/dev/null) || return
+  case $choice in
+    status)
+      out=$("$owe" status 2>&1 | tr '\n' '  ·  ')
+      FEEDBACK="${out%  ·  }" ;;
+    pause)   FEEDBACK=$("$owe" pause 2>&1) ;;
+    resume)  FEEDBACK=$("$owe" resume 2>&1) ;;
+    always-animate\ on)  FEEDBACK=$("$owe" animate on 2>&1) ;;
+    always-animate\ off) FEEDBACK=$("$owe" animate off 2>&1) ;;
+    battery\ mode:\ poster) FEEDBACK=$("$owe" battery poster 2>&1) ;;
+    battery\ mode:\ play)   FEEDBACK=$("$owe" battery play 2>&1) ;;
+    battery\ mode:\ pause)  FEEDBACK=$("$owe" battery pause 2>&1) ;;
+    *) FEEDBACK="" ;;
+  esac
+}
+export -f do_engine
+
 do_add() {
   # Secure directory navigation: start in Downloads (where the user's clips
   # live), fall back to Videos/, then $HOME. The browser validates every
@@ -997,6 +1026,8 @@ How to use
   Palette     e on a clip — re-extracts its palette
               with Aether (own-palette clips only).
               The "Edit palette" entry opens a picker
+  Engine      o — OWE wallpaper engine: live status, manual
+              pause/resume, always-animate, battery policy
   Help        h or ?  ·   Quit  q / Esc
 
   [own palette]  the clip has its own theme; its
@@ -1093,6 +1124,7 @@ main() {
         --bind "r:execute-silent(printf '%s\\n' {} > $SESSION/rline)+abort" \
         --bind "e:execute-silent(printf '%s\\n' {} > $SESSION/eline)+abort" \
         --bind "h:execute-silent(echo HELP > $SESSION/action)+abort" \
+        --bind "o:execute-silent(echo ENGINE > $SESSION/action)+abort" \
         --bind "?:execute-silent(echo HELP > $SESSION/action)+abort" \
         --bind "q:abort,esc:abort" \
         --color "$(fzf_colors)" \
@@ -1139,6 +1171,7 @@ main() {
       case $action in
         ADD) do_add ;;
         HELP) show_help ;;
+        ENGINE) do_engine ;;
       esac
       continue
     fi
@@ -1154,6 +1187,7 @@ main() {
       *"Add a video"*) do_add ;;
       *"Remove a video"*) remove_picker ;;
       *"Edit palette"*) palette_picker ;;
+      *"Engine (o key)"*) do_engine ;;
       *"How to use"*) show_help ;;
       "==="*) : ;;   # section divider selected → ignore
       *)

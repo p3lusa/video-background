@@ -32,6 +32,15 @@ PLUGIN_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Keep the theme menu clean (idempotent, silent).
 "$PLUGIN_BIN/video-menu.sh" --add --quiet || true
 
+# --- paired clip lookup -------------------------------------------------------
+paired_video() { # <theme-dir> <base> → clip path or empty
+  local d=$1 b=$2 e
+  for e in mp4 mkv webm mov avi; do
+    [[ -f "$d/videos/$b.$e" ]] && { printf '%s' "$d/videos/$b.$e"; return 0; }
+  done
+  return 0
+}
+
 USER_THEMES="$HOME/.config/omarchy/themes"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/video-switcher"
 ENTRIES_TSV="$CACHE_DIR/entries.tsv"
@@ -54,7 +63,7 @@ for tdir in "$USER_THEMES"/*/; do
   for poster in "$tdir"/backgrounds/*; do
     [[ -f $poster ]] || continue
     base="${poster##*/}"; base="${base%.*}"
-    [[ -f "$tdir/videos/$base.mp4" ]] || continue
+    [[ -n $(paired_video "$tdir" "$base") ]] || continue
     clips+=("$(basename "$poster")")
   done
   if (( ${#clips[@]} > 0 )); then
@@ -157,8 +166,8 @@ fi
 if [[ $entry_theme != "$CURRENT_THEME" ]]; then
   omarchy theme set "$entry_theme"
 fi
-# OWE backend: name the CLIP (mp4) so owed renders it; poster stays behind it
+# OWE backend: name the CLIP so owed renders it; poster stays behind it
 # as the still partner. Fall back to the poster if the clip vanished mid-run.
-clip_video="$CURRENT_THEME_PATH/videos/${entry_poster%.*}.mp4"
-[[ -f $clip_video ]] || clip_video="$CURRENT_THEME_PATH/backgrounds/$entry_poster"
+clip_video="$(paired_video "$CURRENT_THEME_PATH" "${entry_poster%.*}")"
+[[ -n $clip_video ]] || clip_video="$CURRENT_THEME_PATH/backgrounds/$entry_poster"
 omarchy theme bg set "$clip_video"

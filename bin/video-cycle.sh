@@ -33,6 +33,15 @@ if [[ $# -ne 1 || ( "$1" != "next" && "$1" != "prev" ) ]]; then
 fi
 direction="$1"
 
+# --- paired clip lookup -------------------------------------------------------
+paired_video() { # <theme-dir> <base> → clip path or empty
+  local d=$1 b=$2 e
+  for e in mp4 mkv webm mov avi; do
+    [[ -f "$d/videos/$b.$e" ]] && { printf '%s' "$d/videos/$b.$e"; return 0; }
+  done
+  return 0
+}
+
 USER_THEMES="$HOME/.config/omarchy/themes"
 list="$HOME/.config/omarchy/video-themes"
 CURRENT_THEME="$(tr -d '[:space:]' < "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "")"
@@ -53,7 +62,7 @@ for tdir in "$USER_THEMES"/*/; do
   for poster in "$tdir"/backgrounds/*; do
     [[ -f $poster ]] || continue
     base="${poster##*/}"; base="${base%.*}"
-    [[ -f "$tdir/videos/$base.mp4" ]] || continue
+    [[ -n $(paired_video "$tdir" "$base") ]] || continue
     clips+=("$(basename "$poster")")
   done
   if (( ${#clips[@]} > 0 )); then
@@ -161,18 +170,13 @@ fi
 # wallpaper daemon renders whatever the symlink names; the paired poster stays
 # in backgrounds/ as its still partner (picker thumbnail, lock, battery poster).
 # Only touch the background when it is not already the playing clip.
-clip_video="$HOME/.local/state/omarchy/current/theme/videos/$clip_base.mp4"
-if [[ ! -f $clip_video ]]; then
+clip_video="$(paired_video "$HOME/.local/state/omarchy/current/theme" "$clip_base")"
+if [[ -z $clip_video ]]; then
   # Defensive: the scan above guarantees a paired clip; fall back to poster.
   clip_video="$HOME/.local/state/omarchy/current/theme/backgrounds/$c"
 fi
 staged_bg="$(readlink -f "$HOME/.local/state/omarchy/current/background" 2>/dev/null || true)"
-staged_base=""
-if [[ -n $staged_bg ]]; then
-  staged_base="${staged_bg##*/}"
-  staged_base="${staged_base%.*}"
-fi
-if [[ $staged_base != "$clip_base" || "${staged_bg##*.}" != "mp4" ]]; then
+if [[ ${staged_bg##*/} != "${clip_video##*/}" ]]; then
   omarchy theme bg set "$clip_video" >/dev/null 2>&1
 fi
 

@@ -49,8 +49,8 @@ if ffprobe -v error -select_streams a -show_entries stream=codec_type \
   if [[ -n $strip_audio ]]; then
     need_tmp=1
   else
-    echo "error: '$base' has an audio track; the plugin would play it." >&2
-    echo "       re-run with --strip-audio to drop the audio (lossless)." >&2
+    echo "error: '$base' has an audio track; OWE plays clip audio through the default output." >&2
+    echo "       re-run with --strip-audio to drop the audio (lossless), or keep it deliberately." >&2
     exit 1
   fi
 fi
