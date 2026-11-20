@@ -81,6 +81,9 @@ next time a video tool runs (`video-cleanup.sh`).
 `video-manage` (keybind below) is a `gum`-based terminal UI, themed by the
 active palette: browse with a "● playing" marker, preview, play (video +
 palette), add (multi-select, bulk folder), remove, re-extract palettes.
+**`o` opens the engine menu**: live `owe` status (engine, hwdec, pause
+reasons), manual pause/resume, `always-animate`, and the battery policy
+(writes `[pause] battery_mode` into `~/.config/owe/config.toml` for you).
 Non-interactive equivalents:
 
 | Command | What it does |
@@ -88,10 +91,12 @@ Non-interactive equivalents:
 | `video-add.sh <clip>` | Validate (remux non-mp4 losslessly; `--strip-audio` optional), create the per-clip Aether theme, register in the cycle, mirror into the library theme (hardlinks). |
 | `video-remove.sh <name>` | Remove the clip + theme + cycle entry everywhere; heals the background if it was playing. Never touches your original file. |
 | `video-theme.sh <clip>` | Per-clip theme only (no library mirror). |
+| `video-owe.sh <op>` | Engine ops: `status`, `pause`, `resume`, `animate on/off`, `battery play\|pause\|poster`. |
 
 A plain image theme with a hand-added `videos/` directory also works —
 `video-next`/`video-switcher` pick up any theme with paired
-`backgrounds/<base>.png` + `videos/<base>.mp4` clips.
+`backgrounds/<base>.<img>` + `videos/<base>.<ext>` clips
+(mp4, mkv, webm, mov, avi).
 
 ## Keybindings (self-installing)
 
