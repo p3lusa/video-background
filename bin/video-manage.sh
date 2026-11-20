@@ -14,7 +14,7 @@
 #   │  === ACTIONS    add / remove / help         │
 #   ├ filter prompt ────────────────────────────────
 #   │ footer: key hints + last-action feedback    │   (fzf --footer)
-#   preview pane (right 1/3): poster thumbnail (kitty protocol, or
+#   preview pane (right 45%): poster thumbnail (kitty protocol, or
 #   chafa→sixel when chafa is installed) + metadata card + action hints.
 #
 # Keys: Enter play · r remove · a add (multi/bulk) · e palette · h/? help · q/Esc quit
@@ -218,6 +218,56 @@ detect_img_proto() {
   export IMG_PROTO
 }
 
+# Cell metrics: the kitty placement box is measured in CELLS, so converting
+# cells <-> pixels needs THIS terminal's cell size (font-dependent). Query
+# XTWINOPS once at startup: CSI 18 t answers "CSI 8;<rows>;<cols> t" (text
+# area in characters) and CSI 14 t answers "CSI 4;<hpx>;<wpx> t" (text area
+# in pixels) — dividing gives the exact cell. Terminals that never answer
+# keep the classic 8x17 fallback. Getting this wrong (assuming square-ish
+# 8x17 on a 13x29 terminal) misplaces the poster and the text card under it.
+CELL_W=${CELL_W:-8}; CELL_H=${CELL_H:-17}
+export CELL_W CELL_H
+
+# read one XTWINOPS response char-by-char until the terminating 't'
+# (responses carry no newline; 1s per char guards a terminal that stays
+# silent mid-response).
+get_resp() {
+  local r="" c
+  while IFS= read -rs -t 1 -n1 c; do
+    r+=$c
+    [[ $c == t ]] && { printf '%s' "$r"; return 0; }
+  done
+  return 1
+}
+
+# parse two XTWINOPS responses ("CSI 8;<rows>;<cols> t" and
+# "CSI 4;<hpx>;<wpx> t") and set CELL_W/CELL_H when sane. Split out from
+# probe_cell_size so the parsing is unit-testable without a real terminal.
+probe_apply() { # <resp18> <resp14>
+  local a=$1 b=$2 rows cols hpx wpx
+  a=${a#*$'\e['}; b=${b#*$'\e['}
+  [[ $a == 8\;* && $b == 4\;* ]] || return 0
+  IFS=';' read -r _ rows cols <<<"${a%t}"
+  IFS=';' read -r _ hpx wpx <<<"${b%t}"
+  [[ $rows =~ ^[0-9]+$ && $cols =~ ^[0-9]+$ && $hpx =~ ^[0-9]+$ && $wpx =~ ^[0-9]+$ ]] || return 0
+  (( rows > 0 && cols > 0 && hpx > 0 && wpx > 0 )) || return 0
+  local cw=$(( wpx / cols )) ch=$(( hpx / rows ))
+  (( cw > 0 && ch > 0 )) || return 0
+  CELL_W=$cw; CELL_H=$ch
+  export CELL_W CELL_H
+}
+
+probe_cell_size() {
+  [[ $IMG_PROTO == kitty && -t 1 ]] || return 0
+  local old a b
+  old=$(stty -g 2>/dev/null) || return 0
+  stty raw -echo 2>/dev/null || return 0
+  printf '\e[18t'; a=$(get_resp)
+  printf '\e[14t'; b=$(get_resp)
+  stty "$old" 2>/dev/null
+  probe_apply "$a" "$b"
+}
+
 # Render the poster for a clip into the preview pane (stdout). No-op to the
 # text card when there is no image protocol or no poster. Output is cached in
 # $SESSION/poster-<base>-<w>.img and regenerated only when the poster or the
@@ -233,7 +283,7 @@ clear_graphics() {
 export -f clear_graphics
 
 render_poster() { # <name>
-  local name=$1 p cache w cols c rows i
+  local name=$1 p cache w cols c iw ih rows i
   p=$(poster_for "$name")
   # The preview pane must always show *this* clip's image. kitty keeps image
   # placements alive across preview redraws, so if this clip has no poster
@@ -241,7 +291,7 @@ render_poster() { # <name>
   # even in the no-poster case.
   [[ -z $IMG_PROTO || $IMG_PROTO == kitty ]] && printf '\033_Ga=d\033\\'
   [[ -z $p || -z $IMG_PROTO || $IMG_PROTO == none ]] && return 0
-  # Dynamic target: the preview pane is fzf's right 33%. Recomputed on every
+  # Dynamic target: the preview pane is fzf's right 45%. Recomputed on every
   # render (fzf re-runs the preview on focus/resize/redraw) so the poster
   # follows the terminal size. `c` = box width in COLUMNS (kitty `a=p,c=,r=`
   # are both in cells; the image is scaled to fit that cell box); `w` = the
@@ -265,28 +315,40 @@ render_poster() { # <name>
   # it. The image gets the rest of the pane height — this is the HEIGHT bound.
   local cardrows=9
   maxrows=$(( rows_total - cardrows )); (( maxrows < 8 )) && maxrows=8
-  # FILL the pane box: width = full pane minus the rounded border (1 cell
-  # each side); height = pane rows minus the rows reserved for the text card
-  # (name/rule/theme/kind/status/media/hint ≈ 9 rows in preview_cmd). The
-  # poster is CENTER-CROPPED to this box's pixel aspect at scale time (see
-  # the ffmpeg filter below): no letterbox, no distortion, and since posters
-  # are wallpaper compositions centered on the subject, cropping the wide
-  # sides of a 16:9 poster in a tall pane keeps the subject.
+  # ffprobe csv is "W,H" — split on the comma (read's default IFS is
+  # whitespace, which would leave ih empty).
+  IFS=',' read -r iw ih < <(ffprobe -v error -select_streams v:0 \
+      -show_entries stream=width,height -of csv=p=0 "$p" 2>/dev/null) || true
+  iw=${iw:-0}; ih=${ih:-0}
+  # FIT the poster inside the pane box — compositions stay whole, no crop.
+  # Box: width = pane minus the rounded border (1 cell each side); height cap
+  # = pane rows minus the rows reserved for the text card below the picture
+  # (name/rule/theme/kind/status/media/hint ≈ 9 rows in preview_cmd).
   #
-  # Pixel target for the crop box uses the CELL aspect (~8x17 px per
-  # monospace cell): a box of W cols x R rows is W*8 x R*17 pixels.
+  # CELLS ARE NOT SQUARE, and their exact size comes from probe_cell_size
+  # (measured via XTWINOPS; 8x17 only as fallback). The image height in ROWS
+  # for a box W cells wide is W * (ih/iw) * (CELL_W/CELL_H). Because the
+  # placement box then has (near) the poster's pixel aspect, kitty's fit
+  # fills the box edge to edge — as large as the pane allows, letterbox-free,
+  # distortion-free, and the text card lands right under the picture.
   boxc=$c
-  rows=$maxrows
-  local wpx=$(( boxc * 8 )) hpx=$(( rows * 17 ))
-  # Cap the transmitted PNG size, preserving the box's pixel aspect (the
-  # placement stretches the PNG to the box — keeping the aspect matched is
-  # what guarantees zero distortion under either kitty fit semantics).
-  if (( wpx > 1024 )); then hpx=$(( (hpx * 1024 + wpx / 2) / wpx )); wpx=1024; fi
-  if (( hpx > 2048 )); then wpx=$(( (wpx * 2048 + hpx / 2) / hpx )); hpx=2048; fi
-  w=$wpx
+  rows=0
+  if (( iw > 0 && ih > 0 )); then
+    rows=$(( (c * ih * CELL_W + iw * CELL_H / 2) / (iw * CELL_H) )); (( rows < 1 )) && rows=1
+    if (( rows > maxrows )); then
+      boxc=$(( (maxrows * iw * CELL_H + ih * CELL_W / 2) / (ih * CELL_W) )); (( boxc < 8 )) && boxc=8
+      rows=$(( (boxc * ih * CELL_W + iw * CELL_H / 2) / (iw * CELL_H) )); (( rows < 1 )) && rows=1
+      (( rows > maxrows )) && rows=$maxrows
+    fi
+  fi
+  # Pixel resolution follows the final box width (CELL_W px per cell), capped
+  # for cheap transmission; the PNG keeps the poster aspect (scale -2), so
+  # its aspect matches the placement box either way.
+  w=$(( boxc * CELL_W )); (( w > 1024 )) && w=1024
   # basename removes the directory; strip any image extension to get a clean
-  # cache key (remove everything from the first dot).
-  cache="$SESSION/poster-$(basename "$p" | sed 's/\.[^.]*$//')-${wpx}x${hpx}.img"
+  # cache key (remove everything from the first dot). CELL dims in the key:
+  # a different terminal's metrics must not reuse a stale render.
+  cache="$SESSION/poster-$(basename "$p" | sed 's/\.[^.]*$//')-${w}-${CELL_W}x${CELL_H}.img"
   if [[ ! -f $cache || $p -nt $cache ]]; then
     local out=""
     case $IMG_PROTO in
@@ -299,9 +361,7 @@ render_poster() { # <name>
         # bytes); the display placement + row padding are emitted fresh below
         # so they always match the current pane size.
         local tmp="$SESSION/thumb.png"
-        if ffmpeg -v error -y -i "$p" \
-            -vf "scale=${wpx}:${hpx}:force_original_aspect_ratio=increase:flags=lanczos,crop=${wpx}:${hpx}" \
-            "$tmp" 2>/dev/null; then
+        if ffmpeg -v error -y -i "$p" -vf "scale=${w}:-2" "$tmp" 2>/dev/null; then
           local first=1 chunk
           {
             while IFS= read -r chunk; do
@@ -321,7 +381,7 @@ render_poster() { # <name>
         fi
         ;;
       sixel)
-        out=$(chafa --format sixel --width "$boxc" --height "$rows" -- "$p" 2>/dev/null) || out=""
+        out=$(chafa --format sixel --width "$boxc" -- "$p" 2>/dev/null) || out=""
         if [[ -n $out ]]; then
           printf '%s' "$out" > "$cache"
         else
@@ -1092,6 +1152,7 @@ fzf_colors() {
 main() {
   local FEEDBACK="" out rc action n
   detect_img_proto
+  probe_cell_size   # exact cell px for the kitty preview (TTY-only, silent)
   while true; do
     drain_tty    # swallow keys typed during gum confirm/spin (else they leak
                  # into this fzf — e.g. 'h' opens help right after a removal)
@@ -1115,7 +1176,7 @@ main() {
         --header "$(build_hero)" \
         --footer "$(build_footer)" \
         --preview "preview_cmd {}" \
-        --preview-window "right:33%,border-rounded" \
+        --preview-window "right:45%,border-rounded" \
         --bind "a:execute-silent(echo ADD > $SESSION/action)+abort" \
         --bind "r:execute-silent(printf '%s\\n' {} > $SESSION/rline)+abort" \
         --bind "e:execute-silent(printf '%s\\n' {} > $SESSION/eline)+abort" \

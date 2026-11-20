@@ -70,28 +70,49 @@ else
   bad "placement a=p,c=<cols> present"
 fi
 
-# 6b) SIZE sanity (FILL mode): the placement must fill the whole pane box —
-# c = pane cols - 2 (rounded border), r = pane rows - 9 (text card rows),
-# and the transmitted PNG must be the crop box in pixels (cell ~8x17), so
-# the poster center-crops to the pane instead of letterboxing in it.
+# 6b) SIZE sanity (FIT mode): placement box must fit the poster inside the
+# pane using the CELL metrics (fallback 8x17 in this test env) — no crop, no
+# over-narrowing. Oracle: independent re-computation of the expected c,r.
 place=$(printf '%s' "$out" | grep -ao $'\033_Ga=p,c=[0-9]*,r=[0-9]*' | head -1)
 pc=$(sed -E 's/.*c=([0-9]+),.*/\1/' <<<"$place")
 pr=$(sed -E 's/.*,r=([0-9]+)/\1/' <<<"$place")
-exp_cols=$(( $(tput cols 2>/dev/null || echo 80) - 2 ))
-exp_rows=$(( $(tput lines 2>/dev/null || echo 24) - 9 )); (( exp_rows < 8 )) && exp_rows=8
-if [[ -n $pc && -n $pr ]] && (( pc == exp_cols && pr == exp_rows )); then
-  ok "placement fills the pane box (c=$pc r=$pr)"
+iw=1280; ih=720   # the 16:9 poster this test generates
+pane_c=$(( $(tput cols 2>/dev/null || echo 80) - 2 ))
+maxr=$(( $(tput lines 2>/dev/null || echo 24) - 9 )); (( maxr < 8 )) && maxr=8
+CW=${CELL_W:-8}; CH=${CELL_H:-17}
+or=$(( (pane_c * ih * CW + iw * CH / 2) / (iw * CH) ))
+if (( or > maxr )); then
+  oc=$(( (maxr * iw * CH + ih * CW / 2) / (ih * CW) )); (( oc < 8 )) && oc=8
+  or=$(( (oc * ih * CW + iw * CH / 2) / (iw * CH) )); (( or > maxr )) && or=$maxr
 else
-  bad "placement fills the pane box (got c=$pc r=$pr, want c=$exp_cols r=$exp_rows)"
+  oc=$pane_c
 fi
+if [[ -n $pc && -n $pr ]] && (( pc == oc && pr == or )); then
+  ok "placement fits poster in pane by cell oracle (c=$pc r=$pr)"
+else
+  bad "placement fits poster (got c=$pc r=$pr, oracle c=$oc r=$or)"
+fi
+# thumb must KEEP the poster aspect (no crop): |tw*ih - th*iw| <= 2%
 twx=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$SESSION/thumb.png" 2>/dev/null)
-want_wpx=$(( pc * 8 )); want_hpx=$(( pr * 17 ))
-(( want_wpx > 1024 )) && want_wpx=1024
-if [[ "$twx" == "$want_wpx,$want_hpx" ]]; then
-  ok "thumb PNG cropped to the box exactly (${want_wpx}x${want_hpx})"
+tw=${twx%,*}; th=${twx#*,}
+if [[ -n $tw && -n $th ]]; then
+  d=$(( tw * ih - th * iw )); (( d < 0 )) && d=$(( -d ))
+  (( d <= tw * ih / 50 )) && ok "thumb keeps poster aspect, no crop (${tw}x${th})" \
+                          || bad "thumb aspect/crop (${tw}x${th})"
 else
-  bad "thumb PNG cropped to the box (got $twx, want $want_wpx,$want_hpx)"
+  bad "thumb.png probeable dimensions"
 fi
+
+# 6c) XTWINOPS parser (real kitty 0.49 responses from this machine):
+CELL_W=8 CELL_H=17
+probe_apply $'\e[8;49;89t' $'\e[4;1421;1157t'
+(( CELL_W == 13 && CELL_H == 29 )) && ok "probe_apply parses kitty responses (13x29)" \
+                                   || bad "probe_apply parses kitty responses (got ${CELL_W}x${CELL_H})"
+CELL_W=8 CELL_H=17
+probe_apply "garbage" "nonsense"
+(( CELL_W == 8 && CELL_H == 17 )) && ok "probe_apply rejects garbage (keeps fallback)" \
+                                  || bad "probe_apply rejects garbage"
+CELL_W=8 CELL_H=17
 
 # 7) no transmit may carry a w= display-width (that's the old broken form)
 if printf '%s' "$out" | grep -qao $'\033_Ga=T[^\\]*w='; then
