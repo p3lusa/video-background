@@ -126,6 +126,11 @@ owe pause / resume / always-animate on
 `~/.config/owe/config.toml`: e.g. `battery_mode = "poster"` (default keeps
 decoding on battery), `[pause] blocklist`, `[render] fade_ms`.
 
+Known engine quirk (owed 0.2.x): if a fullscreen window appears exactly
+while the theme is switching, the auto-pause can trip before the clip's
+first frame and owed parks the still instead. Nothing is broken — `owe
+refresh` (or opening any video tool) loads the clip immediately.
+
 ## Video assets
 
 mpv-backed: mp4, mkv, webm, mov, avi, mpeg, ts, wmv, flv, ogv, 3gp (GIFs
