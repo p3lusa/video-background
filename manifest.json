@@ -16,5 +16,11 @@
   "owe": {
     "package": "owe",
     "minimumVersion": "0.2.14"
+  },
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Manager.qml"
   }
 }
