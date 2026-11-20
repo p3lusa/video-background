@@ -1173,31 +1173,24 @@ main() {
     # redraw/refresh/reload/preview-resalt and SIGUSR1 all fail to force an
     # in-place re-preview), so a kitty poster would keep its old size and
     # orphan the text card after a window change. Remedy: watch the tty
-    # geometry (TCGETS ioctl — legal for a background job, no SIGTTIN), and
-    # on change end fzf through its control socket (`accept`, a safe action);
-    # the RESIZED marker below turns that exit into a silent re-launch, which
-    # re-renders the whole UI — poster included — at the new geometry.
-    rm -f "$SESSION/RESIZED" "$SESSION/fzf-ui.sock"
-    local RESIZE_WATCH=""
-    if command -v curl >/dev/null 2>&1; then
-      (
-        local lastsz="" cur
-        while :; do
-          sleep 0.4
-          cur=$(stty size </dev/tty 2>/dev/null) || exit 0
-          if [[ -n $lastsz && $cur != "$lastsz" ]]; then
-            touch "$SESSION/RESIZED"
-            curl -fsS --unix-socket "$SESSION/fzf-ui.sock" \
-              http://localhost/ --data-binary accept >/dev/null 2>&1
-            exit 0
-          fi
-          lastsz=$cur
-        done
-      ) &
-      RESIZE_WATCH=$!
-    fi
-
-    out=$(build_list | fzf \
+    # geometry (TCGETS ioctl — legal for a background job, no SIGTTIN) and
+    # end fzf with a direct SIGINT; the RESIZED marker below turns that exit
+    # into a silent re-launch which re-renders the whole UI — poster
+    # included — at the new geometry. Deliberately NOT driven through fzf's
+    # --listen control socket: --listen swallows bare ESC (the quit key),
+    # and an in-session `curl accept` coincided with SIGHUP to the entire
+    # process group, killing fzf and this script (the window closing).
+    rm -f "$SESSION/RESIZED"
+    build_list > "$SESSION/list"
+    # fzf runs as an async job: in a non-interactive script (job control off)
+    # it stays in the SAME (foreground) process group, so /dev/tty input and
+    # SIGWINCH repainting work exactly as when fzf was foreground. The
+    # `trap : INT` + exec defeats bash's async-job SIGINT-ignore: a CAUGHT
+    # disposition resets to default across exec, so fzf installs its own
+    # handler and answers SIGINT cleanly. exec also keeps $! == fzf's pid.
+    (
+      trap : INT
+      exec fzf \
         --height "90%" \
         --border \
         --border-label "$label" \
@@ -1208,7 +1201,6 @@ main() {
         --footer "$(build_footer)" \
         --preview "preview_cmd {}" \
         --preview-window "right:45%,border-rounded" \
-        --listen="$SESSION/fzf-ui.sock" \
         --bind "a:execute-silent(echo ADD > $SESSION/action)+abort" \
         --bind "r:execute-silent(printf '%s\\n' {} > $SESSION/rline)+abort" \
         --bind "e:execute-silent(printf '%s\\n' {} > $SESSION/eline)+abort" \
@@ -1217,11 +1209,40 @@ main() {
         --bind "?:execute-silent(echo HELP > $SESSION/action)+abort" \
         --bind "q:abort,esc:abort" \
         --color "$(fzf_colors)" \
-        2>/dev/null) || rc=$?
+        < "$SESSION/list" > "$SESSION/fzf.out" 2>/dev/null
+    ) &
+    local FZF_PID=$!
+    (
+      local lastsz="" cur
+      while :; do
+        sleep 0.4
+        cur=$(stty size </dev/tty 2>/dev/null) || exit 0
+        if [[ -n $lastsz && $cur != "$lastsz" ]]; then
+          touch "$SESSION/RESIZED"
+          kill -INT "$FZF_PID" 2>/dev/null
+          # fzf deliberately ignores SIGINT while a command is "executing"
+          # (terminal.go intChan guard); escalate to SIGTERM (its handler
+          # quits unconditionally) if the first INT got swallowed.
+          { sleep 1; kill -0 "$FZF_PID" 2>/dev/null && kill -TERM "$FZF_PID" 2>/dev/null; } &
+          exit 0
+        fi
+        lastsz=$cur
+      done
+    ) &
+    local RESIZE_WATCH=$!
 
-    [[ -n $RESIZE_WATCH ]] && { kill "$RESIZE_WATCH" 2>/dev/null; wait "$RESIZE_WATCH" 2>/dev/null; }
+    wait "$FZF_PID" || rc=$?
+    out=$(cat "$SESSION/fzf.out" 2>/dev/null)
+
+    # The watcher exits on its own after firing, so kill/wait may hit an
+    # already-reaped job — guard hard; the script runs under `set -e` and an
+    # unguarded `kill` here once exited the whole TUI (the window closing).
+    if [[ -n $RESIZE_WATCH ]] && kill -0 "$RESIZE_WATCH" 2>/dev/null; then
+      kill "$RESIZE_WATCH" 2>/dev/null
+    fi
+    wait "$RESIZE_WATCH" 2>/dev/null || true
     if [[ -f $SESSION/RESIZED ]]; then   # geometry changed mid-browse: re-render
-      rm -f "$SESSION/RESIZED" "$SESSION/fzf-ui.sock"
+      rm -f "$SESSION/RESIZED"
       continue
     fi
 
