@@ -28,7 +28,7 @@ plugin adds the library, the per-clip theming, and the hotkeys on top.
 video-manage (TUI) / hotkeys
   ├─ video-theme.sh   → creates theme video-<clip> (palette extracted from the clip)
   ├─ omarchy theme set video-<clip>                → palette + defaults
-  └─ omarchy theme bg set videos/<clip>.mp4        → the background symlink names the clip
+  └─ omarchy theme bg set backgrounds/<clip>.mp4   → the background symlink names the clip
        └─ owed (inotify) takes the wallpaper layer and renders the clip
 ```
 
@@ -69,7 +69,8 @@ video-prev                              # previous clip + palette
 `video-theme.sh` extracts a poster frame, runs
 [Aether](https://github.com/omacom/aether) to derive the palette, builds the
 full theme (terminal, bar, lock screen, …), installs it with the clip in its
-`videos/` directory, and points the wallpaper at the clip. Result: the video
+`backgrounds/` directory (next to the poster), and points the wallpaper at
+the clip. Result: the video
 wallpaper and every accent color come from the same frame.
 Prerequisites: `aether` in `PATH` and `ffmpeg`/`ffprobe`.
 
@@ -93,10 +94,13 @@ Non-interactive equivalents:
 | `video-theme.sh <clip>` | Per-clip theme only (no library mirror). |
 | `video-owe.sh <op>` | Engine ops: `status`, `pause`, `resume`, `animate on/off`, `battery play\|pause\|poster`. |
 
-A plain image theme with a hand-added `videos/` directory also works —
-`video-next`/`video-switcher` pick up any theme with paired
-`backgrounds/<base>.<img>` + `videos/<base>.<ext>` clips
-(mp4, mkv, webm, mov, avi).
+A plain image theme with clips hand-dropped into its `backgrounds/`
+directory also works — `video-next`/`video-switcher` pick up any theme
+with paired `backgrounds/<base>.<img>` + `backgrounds/<base>.<ext>`
+clips (mp4, mkv, webm, mov, avi). A legacy `videos/` directory is
+detected and migrated to `backgrounds/` automatically (native Omarchy
+tooling — the wallpaper picker and `theme bg next` — only lists clips
+inside `backgrounds/`).
 
 ## Keybindings (self-installing)
 
