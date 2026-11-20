@@ -70,21 +70,27 @@ else
   bad "placement a=p,c=<cols> present"
 fi
 
-# 6b) SIZE sanity: the placement box must have (near) the image's pixel
-# aspect ratio — cells are ~8x17 px, so c*8/(r*17) ≈ iw/ih (16:9 poster).
-# Square-cell math (the old bug) halved the box width for tall panes.
+# 6b) SIZE sanity (FILL mode): the placement must fill the whole pane box —
+# c = pane cols - 2 (rounded border), r = pane rows - 9 (text card rows),
+# and the transmitted PNG must be the crop box in pixels (cell ~8x17), so
+# the poster center-crops to the pane instead of letterboxing in it.
 place=$(printf '%s' "$out" | grep -ao $'\033_Ga=p,c=[0-9]*,r=[0-9]*' | head -1)
 pc=$(sed -E 's/.*c=([0-9]+),.*/\1/' <<<"$place")
 pr=$(sed -E 's/.*,r=([0-9]+)/\1/' <<<"$place")
-if [[ -n $pc && -n $pr ]] && (( pr > 0 && pc > 0 )); then
-  # |100*(c*8*ih - r*17*iw)| vs 10% of c*8*ih — for 16:9 (iw=1280, ih=720):
-  lhs=$(( pc * 8 * 720 )); rhs=$(( pr * 17 * 1280 ))
-  diff=$(( lhs - rhs )); (( diff < 0 )) && diff=$(( -diff ))
-  tol=$(( lhs / 10 ))
-  (( diff <= tol )) && ok "placement box aspect ≈ image aspect (c=$pc r=$pr)" \
-                    || bad "placement box aspect off (c=$pc r=$pr, diff=$diff tol=$tol)"
+exp_cols=$(( $(tput cols 2>/dev/null || echo 80) - 2 ))
+exp_rows=$(( $(tput lines 2>/dev/null || echo 24) - 9 )); (( exp_rows < 8 )) && exp_rows=8
+if [[ -n $pc && -n $pr ]] && (( pc == exp_cols && pr == exp_rows )); then
+  ok "placement fills the pane box (c=$pc r=$pr)"
 else
-  bad "placement carries both c= and r="
+  bad "placement fills the pane box (got c=$pc r=$pr, want c=$exp_cols r=$exp_rows)"
+fi
+twx=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$SESSION/thumb.png" 2>/dev/null)
+want_wpx=$(( pc * 8 )); want_hpx=$(( pr * 17 ))
+(( want_wpx > 1024 )) && want_wpx=1024
+if [[ "$twx" == "$want_wpx,$want_hpx" ]]; then
+  ok "thumb PNG cropped to the box exactly (${want_wpx}x${want_hpx})"
+else
+  bad "thumb PNG cropped to the box (got $twx, want $want_wpx,$want_hpx)"
 fi
 
 # 7) no transmit may carry a w= display-width (that's the old broken form)

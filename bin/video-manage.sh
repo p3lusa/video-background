@@ -233,7 +233,7 @@ clear_graphics() {
 export -f clear_graphics
 
 render_poster() { # <name>
-  local name=$1 p cache w cols c iw ih rows i
+  local name=$1 p cache w cols c rows i
   p=$(poster_for "$name")
   # The preview pane must always show *this* clip's image. kitty keeps image
   # placements alive across preview redraws, so if this clip has no poster
@@ -265,38 +265,28 @@ render_poster() { # <name>
   # it. The image gets the rest of the pane height — this is the HEIGHT bound.
   local cardrows=9
   maxrows=$(( rows_total - cardrows )); (( maxrows < 8 )) && maxrows=8
-  # ffprobe csv is "W,H" — split on the comma (read's default IFS is
-  # whitespace, which would leave ih empty).
-  IFS=',' read -r iw ih < <(ffprobe -v error -select_streams v:0 \
-      -show_entries stream=width,height -of csv=p=0 "$p" 2>/dev/null) || true
-  iw=${iw:-0}; ih=${ih:-0}
-  # Box width in columns (starts at the full pane width `c`), and the rows
-  # the image occupies at that width from the poster's aspect ratio (ih/iw).
-  # CELLS ARE NOT SQUARE: a monospace cell is ~8x17 px, so a box of W cols x
-  # R rows has pixel aspect (W*8)/(R*17) — the image-height in ROWS for a box
-  # W cells wide is W * (ih/iw) * (8/17) = W*ih*10 / (iw*21) (cell factor
-  # 2.1 as an integer ratio; kitty fits the image inside the c x r box either
-  # way, and matching the box's pixel aspect to the image's makes the
-  # thumbnail as large as the pane allows — counting rows with square cells
-  # overestimated the height ~2x and needlessly narrowed the box).
+  # FILL the pane box: width = full pane minus the rounded border (1 cell
+  # each side); height = pane rows minus the rows reserved for the text card
+  # (name/rule/theme/kind/status/media/hint ≈ 9 rows in preview_cmd). The
+  # poster is CENTER-CROPPED to this box's pixel aspect at scale time (see
+  # the ffmpeg filter below): no letterbox, no distortion, and since posters
+  # are wallpaper compositions centered on the subject, cropping the wide
+  # sides of a 16:9 poster in a tall pane keeps the subject.
+  #
+  # Pixel target for the crop box uses the CELL aspect (~8x17 px per
+  # monospace cell): a box of W cols x R rows is W*8 x R*17 pixels.
   boxc=$c
-  rows=0
-  if (( iw > 0 && ih > 0 )); then
-    rows=$(( (c * ih * 10 + iw * 21 / 2) / (iw * 21) )); (( rows < 1 )) && rows=1
-    # Fit the height: if the full-pane width would exceed maxrows, shrink the
-    # box so the image fills exactly maxrows rows (preserving aspect).
-    if (( rows > maxrows )); then
-      boxc=$(( (maxrows * iw * 21 + ih * 10 / 2) / (ih * 10) )); (( boxc < 8 )) && boxc=8
-      rows=$(( (boxc * ih * 10 + iw * 21 / 2) / (iw * 21) )); (( rows < 1 )) && rows=1
-      (( rows > maxrows )) && rows=$maxrows
-    fi
-  fi
-  # Pixel resolution follows the final box width (~8 px per monospace cell),
-  # so the cached PNG matches what the placement box will display.
-  w=$(( boxc * 8 )); (( w > 1024 )) && w=1024
+  rows=$maxrows
+  local wpx=$(( boxc * 8 )) hpx=$(( rows * 17 ))
+  # Cap the transmitted PNG size, preserving the box's pixel aspect (the
+  # placement stretches the PNG to the box — keeping the aspect matched is
+  # what guarantees zero distortion under either kitty fit semantics).
+  if (( wpx > 1024 )); then hpx=$(( (hpx * 1024 + wpx / 2) / wpx )); wpx=1024; fi
+  if (( hpx > 2048 )); then wpx=$(( (wpx * 2048 + hpx / 2) / hpx )); hpx=2048; fi
+  w=$wpx
   # basename removes the directory; strip any image extension to get a clean
   # cache key (remove everything from the first dot).
-  cache="$SESSION/poster-$(basename "$p" | sed 's/\.[^.]*$//')-$w.img"
+  cache="$SESSION/poster-$(basename "$p" | sed 's/\.[^.]*$//')-${wpx}x${hpx}.img"
   if [[ ! -f $cache || $p -nt $cache ]]; then
     local out=""
     case $IMG_PROTO in
@@ -309,7 +299,9 @@ render_poster() { # <name>
         # bytes); the display placement + row padding are emitted fresh below
         # so they always match the current pane size.
         local tmp="$SESSION/thumb.png"
-        if ffmpeg -v error -y -i "$p" -vf "scale=${w}:-2" "$tmp" 2>/dev/null; then
+        if ffmpeg -v error -y -i "$p" \
+            -vf "scale=${wpx}:${hpx}:force_original_aspect_ratio=increase:flags=lanczos,crop=${wpx}:${hpx}" \
+            "$tmp" 2>/dev/null; then
           local first=1 chunk
           {
             while IFS= read -r chunk; do
@@ -329,7 +321,7 @@ render_poster() { # <name>
         fi
         ;;
       sixel)
-        out=$(chafa --format sixel --width "$boxc" -- "$p" 2>/dev/null) || out=""
+        out=$(chafa --format sixel --width "$boxc" --height "$rows" -- "$p" 2>/dev/null) || out=""
         if [[ -n $out ]]; then
           printf '%s' "$out" > "$cache"
         else
